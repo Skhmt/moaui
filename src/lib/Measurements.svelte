@@ -49,11 +49,13 @@
 			style="width: 8em; height: 1.1em"
 		/>
 		<select bind:value={leftUnit}>
-			<option>Meters</option>
 			<option>Centimeters</option>
-			<option>Yards</option>
 			<option>Feet</option>
 			<option>Inches</option>
+			<option>Kilometers</option>
+			<option>Meters</option>
+			<option>Miles</option>
+			<option>Yards</option>
 		</select>
 	</div>
 
@@ -65,11 +67,13 @@
 			disabled
 		/>
 		<select bind:value={rightUnit}>
-			<option>Meters</option>
 			<option>Centimeters</option>
-			<option>Yards</option>
 			<option>Feet</option>
 			<option>Inches</option>
+			<option>Kilometers</option>
+			<option>Meters</option>
+			<option>Miles</option>
+			<option>Yards</option>
 		</select>
 	</div>
 </div>
