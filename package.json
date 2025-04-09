@@ -19,6 +19,6 @@
 		"vite-plugin-pwa": "^1.0.0"
 	},
 	"dependencies": {
-		"@moa/moa": "npm:@jsr/moa__moa@^0.1.1"
+		"@moa/moa": "npm:@jsr/moa__moa@^0.2.0"
 	}
 }
