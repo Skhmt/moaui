@@ -2,7 +2,7 @@
 	import { moa2mrad } from '@moa/moa';
 
 	let userMoa = $state(0);
-	let userMoaToMrad = $derived(moa2mrad(userMoa).toFixed(2));
+	let userMoaToMrad = $derived(moa2mrad(userMoa).toFixed(4));
 
 	function modMoa(mod: number) {
 		let temp = userMoa + mod;
@@ -33,7 +33,7 @@
 		<input
 			type="text"
 			bind:value={userMoaToMrad}
-			style="width: 6em; height: 1.1em"
+			style="width: 18em; height: 1.1em"
 			disabled
 		/>
 	</div>

@@ -4,7 +4,7 @@
 	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
-		"dev": "vite",
+		"dev": "vite --host",
 		"build": "vite build",
 		"preview": "vite preview",
 		"check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
@@ -12,6 +12,7 @@
 	"devDependencies": {
 		"@sveltejs/vite-plugin-svelte": "^5.0.3",
 		"@tsconfig/svelte": "^5.0.4",
+		"@types/geodesy": "^2.2.8",
 		"svelte": "^5.20.2",
 		"svelte-check": "^4.1.4",
 		"typescript": "~5.7.2",
@@ -19,6 +20,7 @@
 		"vite-plugin-pwa": "^1.0.0"
 	},
 	"dependencies": {
-		"@moa/moa": "npm:@jsr/moa__moa@^0.2.0"
+		"@moa/moa": "npm:@jsr/moa__moa@^0.2.0",
+		"geodesy": "^2.4.0"
 	}
 }

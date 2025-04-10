@@ -12,32 +12,32 @@
 		mi2m,
 		m2km,
 		km2m,
-	} from "@moa/moa";
+	} from '@moa/moa';
 
 	let leftValue = $state(0);
-	let leftUnit = $state("Meters");
+	let leftUnit = $state('Meters');
 
-	let rightUnit = $state("Meters");
+	let rightUnit = $state('Meters');
 	let rightValue = $derived.by(() => {
 		let inMeters = leftValue;
 
-		if (leftUnit === "Yards") inMeters = yd2m(leftValue);
-		else if (leftUnit === "Feet") inMeters = ft2m(leftValue);
-		else if (leftUnit === "Inches") inMeters = in2m(leftValue);
-		else if (leftUnit === "Centimeters") inMeters = cm2m(leftValue);
-		else if (leftUnit === "Miles") inMeters = mi2m(leftValue);
-		else if (leftUnit === "Kilometers") inMeters = km2m(leftValue);
+		if (leftUnit === 'Yards') inMeters = yd2m(leftValue);
+		else if (leftUnit === 'Feet') inMeters = ft2m(leftValue);
+		else if (leftUnit === 'Inches') inMeters = in2m(leftValue);
+		else if (leftUnit === 'Centimeters') inMeters = cm2m(leftValue);
+		else if (leftUnit === 'Miles') inMeters = mi2m(leftValue);
+		else if (leftUnit === 'Kilometers') inMeters = km2m(leftValue);
 
 		let output = inMeters;
 
-		if (rightUnit === "Yards") output = m2yd(inMeters);
-		else if (rightUnit === "Feet") output = m2ft(inMeters);
-		else if (rightUnit === "Inches") output = m2in(inMeters);
-		else if (rightUnit === "Centimeters") output = m2cm(inMeters);
-		else if (rightUnit === "Miles") output = m2mi(inMeters);
-		else if (rightUnit === "Kilometers") output = m2km(inMeters);
+		if (rightUnit === 'Yards') output = m2yd(inMeters);
+		else if (rightUnit === 'Feet') output = m2ft(inMeters);
+		else if (rightUnit === 'Inches') output = m2in(inMeters);
+		else if (rightUnit === 'Centimeters') output = m2cm(inMeters);
+		else if (rightUnit === 'Miles') output = m2mi(inMeters);
+		else if (rightUnit === 'Kilometers') output = m2km(inMeters);
 
-		return Number(output.toFixed(3));
+		return Number(output.toFixed(5));
 	});
 </script>
 
@@ -46,7 +46,7 @@
 		<input
 			type="number"
 			bind:value={leftValue}
-			style="width: 8em; height: 1.1em"
+			style="width: 16em; height: 1.1em"
 		/>
 		<select bind:value={leftUnit}>
 			<option>Centimeters</option>
@@ -63,7 +63,7 @@
 		<input
 			type="number"
 			bind:value={rightValue}
-			style="width: 8em; height: 1.1em"
+			style="width: 16em; height: 1.1em"
 			disabled
 		/>
 		<select bind:value={rightUnit}>

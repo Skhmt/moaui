@@ -45,11 +45,7 @@
 		<strong>Size:</strong>
 	</div>
 	<div>
-		<input
-			type="number"
-			bind:value={sizeValue}
-			style="width: 6em; height: 1.1em"
-		/>
+		<input type="number" bind:value={sizeValue} />
 		<select bind:value={sizeUnit}>
 			<option>Meters</option>
 			<option>Centimeters</option>
@@ -63,11 +59,7 @@
 		<strong>Angle:</strong>
 	</div>
 	<div>
-		<input
-			type="number"
-			bind:value={angleValue}
-			style="width: 6em; height: 1.1em"
-		/>
+		<input type="number" bind:value={angleValue} />
 		<select bind:value={angleUnit}>
 			<option>Mils (mrad)</option>
 			<option>MOA (arcmin)</option>
@@ -78,12 +70,7 @@
 		<strong>Distance:</strong>
 	</div>
 	<div>
-		<input
-			type="number"
-			bind:value={distanceValue}
-			style="width: 6em; height: 1.1em"
-			disabled
-		/>
+		<input type="number" bind:value={distanceValue} disabled />
 		<select bind:value={distanceUnit}>
 			<option>Meters</option>
 			<option>Yards</option>
@@ -96,5 +83,10 @@
 	.container {
 		display: grid;
 		grid-template-columns: 5em 1fr;
+	}
+
+	input {
+		width: 12em;
+		height: 1.1em;
 	}
 </style>
