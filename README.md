@@ -6,10 +6,9 @@
 
 ## To do
 
-Make a camera compass thing
-
-https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable#required_manifest_members
-
-https://vite-pwa-org.netlify.app/guide/pwa-minimal-requirements.html
-
-https://vite-pwa-org.netlify.app/assets-generator/
+- Pre-set sizes for MAM, deer, hog, coyote, car, truck, door, window
+- Notes/Dope section?
+- Finish group size maker
+- Round counter?
+- Load development tracker?
+- Pure lat/lon converter even though the other thing can do it
