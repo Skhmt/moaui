@@ -5,19 +5,19 @@
 	import FindSize from "./lib/FindSize.svelte";
 	import Measurements from "./lib/Measurements.svelte";
 	import GetCoords from "./lib/GetCoords.svelte";
+	//@ts-ignore
 	import Group from "./lib/Group.svelte";
 
 	let tab = $state(0);
 </script>
 
 <main>
-	<!-- <Group /> -->
-
 	<div>
 		<button onclick={() => (tab = 0)} disabled={tab == 0}> Convert </button>
 		<button onclick={() => (tab = 1)} disabled={tab == 1}>
 			Calculate
 		</button>
+		<button onclick={() => (tab = 2)} disabled={tab == 2}> Groups </button>
 	</div>
 
 	<!-- Convert tab -->
@@ -43,13 +43,18 @@
 		<h2>Find size</h2>
 		<FindSize />
 	</div>
+
+	<!-- Group tab -->
+	<div style={tab == 2 ? "display: block" : "display: none"}>
+		<Group />
+	</div>
 </main>
 
 <style>
 	button {
 		width: 8em;
 		height: 1.5em;
-		font-size: 1.5em;
+		font-size: 1em;
 	}
 	button:disabled {
 		font-weight: bold;

@@ -1,4 +1,4 @@
-<!-- WIP - working pretty well so far.  -->
+<!-- This is known to work but not ideally. No major bugs. -->
 <script lang="ts">
     import { onMount, onDestroy, tick } from "svelte";
 
@@ -107,27 +107,8 @@
     let controlsColumnEl: HTMLDivElement | undefined;
     let dpr = 1;
 
-    // --- Style State Variables (Added) ---
-    let legendFontSize: number = 11;
-    let legendTextColor: string = "#e0e0e0";
-    let legendBgColor: string = "#000000";
-    let legendBorderColor: string = "#555555"; // Currently unused in drawInfoBox, but available
-    let lineWidthBase: number = 1.5;
-    let bulletHoleColor: string = "#FF4136";
-    let inactiveBulletHoleColor: string = "rgba(255,65,54,0.7)"; // Derived or separate setting? Let's keep it derived for now.
-    let selectedHoleColor: string = "#FFDC00";
-    let selectedHoleLineWidthMultiplier: number = 2;
-    let centroidColor: string = "#0074D9";
-    let aimPointColor: string = "#FF851B";
-    let offsetLineColor: string = "#00BFFF";
-    let offsetLineWidthMultiplier: number = 0.8;
-    let scaleLineColor: string = "#00FF00"; // Default 'lime'
-    let scaleLineWidth: number = 2;
-    let scaleMarkerSize: number = 6;
-
     // --- Lifecycle & Setup ---
     let observer: ResizeObserver | null = null;
-
     onMount(() => {
         /* ... dpr, observer, listeners ... */
         dpr = window.devicePixelRatio || 1;
@@ -136,12 +117,10 @@
             observer = new ResizeObserver(handleResize);
             observer.observe(canvasAreaElement); // Observe the container div
         }
-
         window.addEventListener("pointermove", handleWindowPointerMove);
         window.addEventListener("pointerup", handleWindowPointerUp);
         window.addEventListener("keydown", handleKeyDown);
     });
-
     onDestroy(() => {
         /* ... cleanup ... */
         if (canvasAreaElement && observer) {
@@ -154,10 +133,10 @@
         window.removeEventListener("pointerup", handleWindowPointerUp);
         window.removeEventListener("keydown", handleKeyDown);
     });
-
     function handleResize() {
         // Display size changed
         if (!canvasElement || !ctx) return;
+
         // Calculate the new drawing buffer size needed based on display size and DPR
         const displayWidth = canvasElement.clientWidth;
         const displayHeight = canvasElement.clientHeight;
@@ -169,6 +148,7 @@
 
         const newBufferWidth = Math.round(displayWidth * dpr);
         const newBufferHeight = Math.round(displayHeight * dpr);
+
         // Only resize the drawing buffer if it's different from the current size
         // to avoid unnecessary resizing and clearing
         if (
@@ -178,8 +158,9 @@
             canvasElement.width = newBufferWidth;
             canvasElement.height = newBufferHeight;
             console.log(
-                `Resized canvas buffer to ${newBufferWidth}x${newBufferHeight}`,
+                `Resized canvas buffer to <span class="math-inline">\{newBufferWidth\}x</span>{newBufferHeight}`,
             );
+            // No need to redraw here, redrawCanvas will be called next
         }
         redrawCanvas();
     } // Display size changed
@@ -214,13 +195,11 @@
                 // --- ADD setTimeout ---
                 // Defer calculations slightly to allow browser layout to stabilize
                 setTimeout(() => {
-                    // Add checks in case component/canvas is
-                    // destroyed before timeout runs
+                    // Add checks in case component/canvas is destroyed before timeout runs
                     if (!canvasElement || !imageElement) return;
                     resetZoomToFit(); // This reads clientWidth/Height
                     redrawCanvas(); // This calls calculateViewport which reads clientWidth/Height
-                }, 10); // Use a small
-                // delay (e.g., 10ms, maybe even 0)
+                }, 10); // Use a small delay (e.g., 10ms, maybe even 0)
                 // --- END setTimeout ---
             });
             mode = "scaling";
@@ -372,14 +351,12 @@
         ctx.beginPath();
         ctx.moveTo(startC.x, startC.y);
         ctx.lineTo(endC.x, endC.y);
-        // Use state variables for color and width
-        ctx.strokeStyle = scaleLineColor; // Use variable
-        ctx.lineWidth = Math.max(dpr, scaleLineWidth * dpr); // Use variable, ensure min width
+        ctx.strokeStyle = "lime";
+        ctx.lineWidth = Math.max(dpr, 2 * dpr);
         ctx.setLineDash([]);
         ctx.stroke();
-        // Use state variable for marker color and size
-        ctx.fillStyle = scaleLineColor; // Use variable
-        const mS = Math.max(2 * dpr, scaleMarkerSize * dpr); // Use variable, ensure min size
+        ctx.fillStyle = "lime";
+        const mS = Math.max(2 * dpr, 6 * dpr);
         ctx.fillRect(startC.x - mS / 2, startC.y - mS / 2, mS, mS);
         ctx.fillRect(endC.x - mS / 2, endC.y - mS / 2, mS, mS);
         ctx.restore();
@@ -397,37 +374,25 @@
             referenceUnit,
         );
         const bRImg = (dUnit / 2) * sc;
-        if (!lastViewport) return; // Guard against missing viewport
-        const lPR = ctx.canvas.width / lastViewport.sWidth;
+        const lPR = ctx.canvas.width / lastViewport!.sWidth;
         const bRCvs = bRImg * lPR;
-
-        // Use state variables for colors
-        const hC = act ? bulletHoleColor : inactiveBulletHoleColor; // Use variable (consider making inactive adjustable too)
-        const hSC = selectedHoleColor; // Use variable
-        const ceC = act ? centroidColor : "rgba(0,116,217,0.7)"; // Use variable (adjust inactive?)
-        const aiC = act ? aimPointColor : "rgba(255,133,27,0.7)"; // Use variable (adjust inactive?)
-        const ofC = offsetLineColor; // Use variable
-
-        // Use state variable for base line width
-        const lW = Math.max(0.5 * dpr, lineWidthBase * dpr); // Use variable
-
+        const hC = act ? "#FF4136" : "rgba(255,65,54,0.7)";
+        const hSC = "#FFDC00";
+        const ceC = act ? "#0074D9" : "rgba(0,116,217,0.7)";
+        const aiC = act ? "#FF851B" : "rgba(255,133,27,0.7)";
+        const ofC = "#00BFFF";
+        const lW = Math.max(0.5 * dpr, 1.5 * dpr);
         ctx.save();
-
-        // --- Draw Bullet Holes ---
         g.bulletHolesPixels.forEach((hImg: Point, hIdx) => {
             const hCvs = imageToCanvasCoords(hImg);
             if (!hCvs) return;
-            const isSelected = act && hIdx === selectedHoleIndex;
-            ctx.strokeStyle = isSelected ? hSC : hC; // Use selected/normal color vars
-            // Use base width and multiplier for selected hole
-            ctx.lineWidth = isSelected
-                ? Math.max(dpr, lW * selectedHoleLineWidthMultiplier) // Use multiplier
-                : lW;
+            ctx.strokeStyle = act && hIdx === selectedHoleIndex ? hSC : hC;
+            ctx.lineWidth =
+                act && hIdx === selectedHoleIndex ? Math.max(dpr, 3 * dpr) : lW;
             ctx.beginPath();
-            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr, bRCvs), 0, Math.PI * 2); // Keep bullet radius based on diameter
+            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr, bRCvs), 0, Math.PI * 2);
             ctx.stroke();
         });
-
         let ceCvs: Point | null = null;
         let aiCvs: Point | null = null;
         if (g.aimingPointPixels)
@@ -439,12 +404,10 @@
             };
             ceCvs = imageToCanvasCoords(ceImg);
         }
-
-        // --- Draw Centroid Marker ---
         if (ceCvs) {
-            ctx.strokeStyle = ceC; // Use variable
-            ctx.lineWidth = lW; // Use base variable
-            const cs = Math.max(3 * dpr, 6 * dpr); // Keep size relative to DPR for visibility? Or make configurable? Let's keep for now.
+            ctx.strokeStyle = ceC;
+            ctx.lineWidth = lW;
+            const cs = Math.max(3 * dpr, 6 * dpr);
             ctx.beginPath();
             ctx.moveTo(ceCvs.x - cs, ceCvs.y);
             ctx.lineTo(ceCvs.x + cs, ceCvs.y);
@@ -452,14 +415,12 @@
             ctx.lineTo(ceCvs.x, ceCvs.y + cs);
             ctx.stroke();
         }
-
-        // --- Draw Aiming Point Marker ---
         if (aiCvs) {
-            ctx.strokeStyle = aiC; // Use variable
-            ctx.lineWidth = lW; // Use base variable
-            const dS = Math.max(dpr, 3 * dpr); // Keep dash relative?
+            ctx.strokeStyle = aiC;
+            ctx.lineWidth = lW;
+            const dS = Math.max(dpr, 3 * dpr);
             ctx.setLineDash([dS, dS]);
-            const cs = Math.max(4 * dpr, 8 * dpr); // Keep size relative?
+            const cs = Math.max(4 * dpr, 8 * dpr);
             ctx.beginPath();
             ctx.moveTo(aiCvs.x - cs, aiCvs.y);
             ctx.lineTo(aiCvs.x + cs, aiCvs.y);
@@ -467,16 +428,10 @@
             ctx.lineTo(aiCvs.x, aiCvs.y + cs);
             ctx.stroke();
             ctx.setLineDash([]);
-
-            // --- Draw Offset Line ---
             if (ceCvs) {
-                ctx.strokeStyle = ofC; // Use variable
-                // Use base width and offset multiplier
-                ctx.lineWidth = Math.max(
-                    0.5 * dpr,
-                    lW * offsetLineWidthMultiplier,
-                ); // Use multiplier
-                const oD = Math.max(1.5 * dpr, 4 * dpr); // Keep dash relative?
+                ctx.strokeStyle = ofC;
+                ctx.lineWidth = Math.max(0.5 * dpr, lW * 0.8);
+                const oD = Math.max(1.5 * dpr, 4 * dpr);
                 ctx.setLineDash([oD, oD]);
                 ctx.beginPath();
                 ctx.moveTo(aiCvs.x, aiCvs.y);
@@ -485,41 +440,13 @@
                 ctx.setLineDash([]);
             }
         }
-
-        // --- Draw Info Box ---
         if (g.resultsValid && (ceCvs || g.infoBoxAnchorImage)) {
-            // Pass style variables to drawInfoBox
-            drawInfoBox(ctx, g, {
-                fontSize: legendFontSize,
-                textColor: legendTextColor,
-                bgColor: legendBgColor,
-                borderColor: legendBorderColor, // Pass border color too
-            });
+            drawInfoBox(ctx, g);
         }
         ctx.restore();
     }
-
-    // Add a new interface for style options
-    interface InfoBoxStyleOptions {
-        fontSize: number;
-        textColor: string;
-        bgColor: string;
-        borderColor: string;
-    }
-
-    function drawInfoBox(
-        context: CanvasRenderingContext2D,
-        group: ShotGroup,
-        // Add style options parameter with defaults matching state vars
-        styles: InfoBoxStyleOptions = {
-            fontSize: legendFontSize,
-            textColor: legendTextColor,
-            bgColor: legendBgColor,
-            borderColor: legendBorderColor,
-        },
-    ) {
-        const lines: string[] = [];
-        // ... (generate text lines as before) ...
+    function drawInfoBox(context: CanvasRenderingContext2D, group: ShotGroup) {
+        const lines: string[] = []; // Generate text lines...
         lines.push(`${group.name} (${group.bulletHolesReal.length} shots)`);
         if (group.maxSpread !== null) {
             const d = convertLinearValue(
@@ -567,18 +494,16 @@
         }
 
         context.save();
-        // Use font size from styles
-        const fS = styles.fontSize;
-        const pad = 4; // Keep padding fixed? Or make configurable?
-        const lH = fS * 1.2; // Line height based on font size
-        context.font = `${fS}px sans-serif`; // Use parameter
+        const fS = 11;
+        const pad = 4;
+        const lH = fS * 1.2;
+        context.font = `${fS}px sans-serif`;
         let maxW = 0;
         lines.forEach((ln) => {
             maxW = Math.max(maxW, context.measureText(ln).width);
         });
         const boxW = maxW + pad * 2;
         const boxH = lines.length * lH + pad * 2;
-        // ... (rest of info box size and anchor calculation as before) ...
         if (
             !group.infoBoxSize ||
             group.infoBoxSize.width !== boxW ||
@@ -588,24 +513,19 @@
         }
         context.restore();
 
-        if (
-            !group.infoBoxAnchorImage &&
-            group.centroidReal &&
-            scale &&
-            lastViewport
-        ) {
+        if (!group.infoBoxAnchorImage && group.centroidReal && scale) {
             const cenImg = {
                 x: group.centroidReal.x * scale,
                 y: group.centroidReal.y * scale,
             };
-            const offX = 15; // Keep offset fixed?
+            const offX = 15;
             group.infoBoxAnchorImage = {
                 x: cenImg.x + offX,
                 y:
                     cenImg.y -
                     boxH /
                         2 /
-                        (context.canvas.height / lastViewport.sHeight / dpr),
+                        (context.canvas.height / lastViewport!.sHeight / dpr),
             };
             groups = groups;
         }
@@ -613,59 +533,36 @@
         if (group.infoBoxAnchorImage) {
             pos = imageToCanvasCoords(group.infoBoxAnchorImage);
         }
-
-        if (!pos || !group.infoBoxSize) return; // Also check infoBoxSize exists
-        // Clamp position based on calculated size (using dpr for render size)
-        pos.x = Math.max(
-            0,
-            Math.min(
-                pos.x,
-                context.canvas.width - group.infoBoxSize.width * dpr,
-            ),
-        );
+        if (!pos) return;
+        pos.x = Math.max(0, Math.min(pos.x, context.canvas.width - boxW * dpr));
         pos.y = Math.max(
             0,
-            Math.min(
-                pos.y,
-                context.canvas.height - group.infoBoxSize.height * dpr,
-            ),
+            Math.min(pos.y, context.canvas.height - boxH * dpr),
         );
 
         context.save();
+        // *** CHANGE: Legend background to black ***
+        const bgColor = "#000000"; // Black background
+        const style = getComputedStyle(document.documentElement);
+        const borderColor =
+            style.getPropertyValue("--border-color").trim() || "#555";
+        const textColor =
+            style.getPropertyValue("--text-color").trim() || "#e0e0e0";
 
-        // Use colors from style parameters
-        // Add alpha transparency (e.g., E6 = 90%) to the background color
-        const bgColorWithAlpha = styles.bgColor.startsWith("#")
-            ? styles.bgColor + "E6"
-            : styles.bgColor; // Handle non-hex potentially? Basic hex handling for now.
-        context.fillStyle = bgColorWithAlpha; // Use parameter + alpha
-        context.strokeStyle = styles.borderColor; // Use parameter
-        context.lineWidth = 1 * dpr; // Keep border width fixed? Or make configurable?
-
-        context.fillRect(
-            pos.x,
-            pos.y,
-            group.infoBoxSize.width * dpr,
-            group.infoBoxSize.height * dpr,
-        ); // Use calculated size * dpr
-        context.strokeRect(
-            pos.x,
-            pos.y,
-            group.infoBoxSize.width * dpr,
-            group.infoBoxSize.height * dpr,
-        ); // Use calculated size * dpr
-
-        context.fillStyle = styles.textColor; // Use parameter
-        // Use font size from styles, adjusted by dpr
-        context.font = `${fS * dpr}px sans-serif`; // Use parameter * dpr
+        context.fillStyle = `${bgColor}E6`; // Black with some transparency
+        context.strokeStyle = borderColor;
+        context.lineWidth = 1 * dpr;
+        context.fillRect(pos.x, pos.y, boxW * dpr, boxH * dpr);
+        context.strokeRect(pos.x, pos.y, boxW * dpr, boxH * dpr);
+        context.fillStyle = textColor;
+        context.font = `${fS * dpr}px sans-serif`;
         context.textAlign = "left";
         context.textBaseline = "top";
         lines.forEach((line, i) => {
-            // Adjust text position by dpr
             context.fillText(
                 line,
-                pos!.x + pad * dpr, // Use pad * dpr
-                pos!.y + pad * dpr + i * lH * dpr, // Use pad, line height * dpr
+                pos!.x + pad * dpr,
+                pos!.y + pad * dpr + i * lH * dpr,
             );
         });
         context.restore();
@@ -709,28 +606,29 @@
             const g = groups[i];
             if (g.resultsValid && g.infoBoxAnchorImage && g.infoBoxSize) {
                 const aImg = g.infoBoxAnchorImage;
-                const sLog = g.infoBoxSize; // Logical size (pixels without dpr)
-                const aCvsLog = imageToCanvasCoords(aImg); // Canvas coords (pixels with dpr)
-
+                const sLog = g.infoBoxSize;
+                const aCvsLog = imageToCanvasCoords(aImg);
                 if (aCvsLog) {
-                    // Calculate the bounding box in *display* coordinates
-                    const bLogRenderWidth = sLog.width * dpr;
-                    const bLogRenderHeight = sLog.height * dpr;
+                    const bLogR: Rect = {
+                        x: aCvsLog.x,
+                        y: aCvsLog.y,
+                        width: sLog.width * dpr,
+                        height: sLog.height * dpr,
+                    };
                     const dRect: Rect = {
                         x:
-                            (aCvsLog.x / canvasElement.width) *
+                            (bLogR.x / canvasElement.width) *
                             canvasElement.clientWidth,
                         y:
-                            (aCvsLog.y / canvasElement.height) *
+                            (bLogR.y / canvasElement.height) *
                             canvasElement.clientHeight,
                         width:
-                            (bLogRenderWidth / canvasElement.width) *
+                            (bLogR.width / canvasElement.width) *
                             canvasElement.clientWidth,
                         height:
-                            (bLogRenderHeight / canvasElement.height) *
+                            (bLogR.height / canvasElement.height) *
                             canvasElement.clientHeight,
                     };
-
                     if (isPointInRect(dCoords, dRect)) {
                         isDraggingInfoBox = true;
                         draggingGroupIndex = i;
@@ -1012,7 +910,7 @@
                   }
                 : null;
             invalidateResults(i);
-            g.infoBoxAnchorImage = null; // Recalculate position after scale change
+            g.infoBoxAnchorImage = null;
         });
         groups = groups;
         tick().then(() => {
@@ -1273,16 +1171,14 @@
         const imgH = imageElement.naturalHeight;
         const dW = canvasElement.clientWidth;
         const dH = canvasElement.clientHeight;
-        let fitScale = 1.0;
-        // Default to 100%
+        let fitScale = 1.0; // Default to 100%
         if (imgW > 0 && imgH > 0 && dW > 0 && dH > 0) {
             fitScale = Math.min(dW / imgW, dH / imgH);
         }
         // *** CHANGE: Ensure zoom is at least 1.0 (or fit scale if image is smaller than display) ***
         viewScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale));
         viewCenter = { x: imgW / 2, y: imgH / 2 };
-        clampViewCenter();
-        // Clamp needed after scale change
+        clampViewCenter(); // Clamp needed after scale change
     }
     function resetZoom() {
         if (!imageElement) return;
@@ -1412,6 +1308,7 @@
 
     // --- Export Canvas Function ---
     function exportCanvasAsJpeg(): void {
+        // Renamed
         if (!canvasElement || !imageElement || !ctx) {
             alert("Canvas/image not ready.");
             return;
@@ -1425,23 +1322,21 @@
             return;
         }
         exportCtx.imageSmoothingEnabled = false;
-        exportCtx.fillStyle = "#FFFFFF"; // White BG for JPEG
-        exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+        exportCtx.fillStyle = "#FFFFFF";
+        exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height); // White BG for JPEG
         exportCtx.drawImage(imageElement, 0, 0);
         exportCtx.save();
-
-        // --- Draw Scaling Line (Export) ---
+        // Draw Overlays (using fixed sizes suitable for full res image)
         if (refLineStart && refLineEnd) {
             exportCtx.beginPath();
             exportCtx.moveTo(refLineStart.x, refLineStart.y);
             exportCtx.lineTo(refLineEnd.x, refLineEnd.y);
-            // Use state variables
-            exportCtx.strokeStyle = scaleLineColor; // Use variable
-            exportCtx.lineWidth = scaleLineWidth; // Use variable (no dpr needed)
+            exportCtx.strokeStyle = "lime";
+            exportCtx.lineWidth = 2;
             exportCtx.setLineDash([]);
             exportCtx.stroke();
-            exportCtx.fillStyle = scaleLineColor; // Use variable
-            const mSize = scaleMarkerSize; // Use variable (no dpr needed)
+            exportCtx.fillStyle = "lime";
+            const mSize = 6;
             exportCtx.fillRect(
                 refLineStart.x - mSize / 2,
                 refLineStart.y - mSize / 2,
@@ -1455,8 +1350,6 @@
                 mSize,
             );
         }
-
-        // --- Draw Group Elements (Export) ---
         if (scale) {
             groups.forEach((group, index) => {
                 const isActive = index === activeGroupIndex;
@@ -1466,39 +1359,24 @@
                     referenceUnit,
                 );
                 const bRadiusImg = (dUnit / 2) * scale!;
-
-                // Use state variables for colors (inactive colors might need adjustment/separate vars)
-                const hColor = isActive
-                    ? bulletHoleColor
-                    : inactiveBulletHoleColor; // Use variable
-                // Note: Selected hole isn't relevant for static export, use normal color.
-                const cenColor = isActive
-                    ? centroidColor
-                    : "rgba(0,116,217,0.7)"; // Use variable
-                const aimColor = isActive
-                    ? aimPointColor
-                    : "rgba(255,133,27,0.7)"; // Use variable
-                const offColor = offsetLineColor; // Use variable
-
-                // Use state variable for line width (no dpr needed)
-                const lWidth = lineWidthBase; // Use variable
-
-                // --- Draw Bullet Holes (Export) ---
-                exportCtx.strokeStyle = hColor; // Use variable
-                exportCtx.lineWidth = lWidth; // Use variable
+                const hColor = isActive ? "#FF4136" : "rgba(255,65,54,0.7)";
+                const cenColor = isActive ? "#0074D9" : "rgba(0,116,217,0.7)";
+                const aimColor = isActive ? "#FF851B" : "rgba(255,133,27,0.7)";
+                const offColor = "#00BFFF";
+                const lWidth = 1.5;
+                exportCtx.strokeStyle = hColor;
+                exportCtx.lineWidth = lWidth;
                 group.bulletHolesPixels.forEach((holeImg: Point) => {
                     exportCtx.beginPath();
                     exportCtx.arc(
                         holeImg.x,
                         holeImg.y,
-                        Math.max(1, bRadiusImg), // Ensure min radius
+                        Math.max(1.5, bRadiusImg),
                         0,
                         Math.PI * 2,
                     );
                     exportCtx.stroke();
                 });
-
-                // --- Draw Centroid/Aim/Offset (Export) ---
                 let cenImgPx: Point | null = null;
                 let aimImgPx: Point | null = group.aimingPointPixels;
                 if (group.resultsValid && group.centroidReal)
@@ -1506,11 +1384,10 @@
                         x: group.centroidReal.x * scale!,
                         y: group.centroidReal.y * scale!,
                     };
-
                 if (cenImgPx) {
-                    exportCtx.strokeStyle = cenColor; // Use variable
-                    exportCtx.lineWidth = lWidth; // Use variable
-                    const cs = 6; // Keep marker size fixed for export? Or use state var?
+                    exportCtx.strokeStyle = cenColor;
+                    exportCtx.lineWidth = lWidth;
+                    const cs = 6;
                     exportCtx.beginPath();
                     exportCtx.moveTo(cenImgPx.x - cs, cenImgPx.y);
                     exportCtx.lineTo(cenImgPx.x + cs, cenImgPx.y);
@@ -1519,10 +1396,10 @@
                     exportCtx.stroke();
                 }
                 if (aimImgPx) {
-                    exportCtx.strokeStyle = aimColor; // Use variable
-                    exportCtx.lineWidth = lWidth; // Use variable
-                    exportCtx.setLineDash([3, 3]); // Keep dash fixed?
-                    const cs = 8; // Keep marker size fixed?
+                    exportCtx.strokeStyle = aimColor;
+                    exportCtx.lineWidth = lWidth;
+                    exportCtx.setLineDash([3, 3]);
+                    const cs = 8;
                     exportCtx.beginPath();
                     exportCtx.moveTo(aimImgPx.x - cs, aimImgPx.y);
                     exportCtx.lineTo(aimImgPx.x + cs, aimImgPx.y);
@@ -1531,11 +1408,9 @@
                     exportCtx.stroke();
                     exportCtx.setLineDash([]);
                     if (cenImgPx) {
-                        exportCtx.strokeStyle = offColor; // Use variable
-                        // Use base width and offset multiplier (no dpr)
-                        exportCtx.lineWidth =
-                            lWidth * offsetLineWidthMultiplier; // Use variable multiplier
-                        exportCtx.setLineDash([4, 4]); // Keep dash fixed?
+                        exportCtx.strokeStyle = offColor;
+                        exportCtx.lineWidth = lWidth * 0.8;
+                        exportCtx.setLineDash([4, 4]);
                         exportCtx.beginPath();
                         exportCtx.moveTo(aimImgPx.x, aimImgPx.y);
                         exportCtx.lineTo(cenImgPx.x, cenImgPx.y);
@@ -1543,16 +1418,14 @@
                         exportCtx.setLineDash([]);
                     }
                 }
-
-                // --- Draw Info Box (Export) ---
+                // Draw Info Box
                 if (
                     group.resultsValid &&
                     group.infoBoxAnchorImage &&
                     group.infoBoxSize
                 ) {
                     const lines: string[] = [];
-                    // ... (Regenerate text lines as before) ...
-                    lines.push(
+                    /* ... Regenerate lines ... */ lines.push(
                         `${group.name} (${group.bulletHolesReal.length} shots)`,
                     );
                     if (group.maxSpread !== null) {
@@ -1603,12 +1476,9 @@
                             `Offset: ${d.toFixed(3)} ${resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
                         );
                     }
-
-                    // Use calculated size (no dpr)
                     const { width: boxW, height: boxH } = group.infoBoxSize;
                     let infoX = group.infoBoxAnchorImage.x;
                     let infoY = group.infoBoxAnchorImage.y;
-                    // Clamp position (no dpr)
                     infoX = Math.max(
                         0,
                         Math.min(infoX, exportCanvas.width - boxW),
@@ -1617,26 +1487,29 @@
                         0,
                         Math.min(infoY, exportCanvas.height - boxH),
                     );
-
-                    // Use state variables for styles (no dpr)
-                    const fSize = legendFontSize; // Use variable
+                    const fSize = 11;
                     const pad = 4;
                     const lH = fSize * 1.2;
+                    // *** FIX: Use black BG, get other styles at time of export ***
+                    const bgColor = "#000000"; // Black background
+                    const computedStyle = getComputedStyle(
+                        document.documentElement,
+                    );
+                    const borderColor =
+                        computedStyle
+                            .getPropertyValue("--border-color")
+                            .trim() || "#555";
+                    const textColor =
+                        computedStyle.getPropertyValue("--text-color").trim() ||
+                        "#e0e0e0";
 
-                    // Use state variables for colors
-                    const bgColorWithAlpha = legendBgColor.startsWith("#")
-                        ? legendBgColor + "E6" // Use variable + alpha
-                        : legendBgColor;
-                    const LborderColor = legendBorderColor; // Use variable
-                    const LtextColor = legendTextColor; // Use variable
-
-                    exportCtx.fillStyle = bgColorWithAlpha; // Use variable + alpha
-                    exportCtx.strokeStyle = LborderColor; // Use variable
-                    exportCtx.lineWidth = 1; // Keep border fixed?
+                    exportCtx.fillStyle = `${bgColor}E6`; // Black with some transparency
+                    exportCtx.strokeStyle = borderColor;
+                    exportCtx.lineWidth = 1;
                     exportCtx.fillRect(infoX, infoY, boxW, boxH);
                     exportCtx.strokeRect(infoX, infoY, boxW, boxH);
-                    exportCtx.fillStyle = LtextColor; // Use variable
-                    exportCtx.font = `${fSize}px sans-serif`; // Use variable (no dpr)
+                    exportCtx.fillStyle = textColor;
+                    exportCtx.font = `${fSize}px sans-serif`;
                     exportCtx.textAlign = "left";
                     exportCtx.textBaseline = "top";
                     lines.forEach((line, i) => {
@@ -1650,8 +1523,6 @@
             });
         }
         exportCtx.restore();
-
-        // ... (rest of export logic: toDataURL, link click) ...
         try {
             const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9); // JPEG format
             const link = document.createElement("a");
@@ -2003,138 +1874,6 @@
                             />
                         </div>{/if}
                 </div>
-
-                <div class="controls-section">
-                    <h2>Appearance</h2>
-                    <div class="controls settings-row appearance-row">
-                        <div class="setting-item appearance-item">
-                            <label for="lineWidthBase">Line Width:</label>
-                            <input
-                                type="number"
-                                id="lineWidthBase"
-                                bind:value={lineWidthBase}
-                                min="0.5"
-                                step="0.1"
-                                max="10"
-                                title="Base line width (px)"
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item">
-                            <label for="legendFontSize">Legend Font:</label>
-                            <input
-                                type="number"
-                                id="legendFontSize"
-                                bind:value={legendFontSize}
-                                min="6"
-                                step="1"
-                                max="24"
-                                title="Legend font size (px)"
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                    </div>
-                    <div class="controls settings-row appearance-row">
-                        <div class="setting-item appearance-item color-item">
-                            <label for="bulletHoleColor" title="Bullet holes"
-                                >Hole:</label
-                            >
-                            <input
-                                type="color"
-                                id="bulletHoleColor"
-                                bind:value={bulletHoleColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="selectedHoleColor"
-                                title="Selected hole highlight">Sel Hole:</label
-                            >
-                            <input
-                                type="color"
-                                id="selectedHoleColor"
-                                bind:value={selectedHoleColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="centroidColor"
-                                title="Group center marker">Center:</label
-                            >
-                            <input
-                                type="color"
-                                id="centroidColor"
-                                bind:value={centroidColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="aimPointColor"
-                                title="Aiming point marker">Aim Pt:</label
-                            >
-                            <input
-                                type="color"
-                                id="aimPointColor"
-                                bind:value={aimPointColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                    </div>
-                    <div class="controls settings-row appearance-row">
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="offsetLineColor"
-                                title="Offset line (aim to center)"
-                                >Offset:</label
-                            >
-                            <input
-                                type="color"
-                                id="offsetLineColor"
-                                bind:value={offsetLineColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="scaleLineColor"
-                                title="Scale reference line">Scale Ln:</label
-                            >
-                            <input
-                                type="color"
-                                id="scaleLineColor"
-                                bind:value={scaleLineColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="legendTextColor"
-                                title="Legend text color">Lgd Text:</label
-                            >
-                            <input
-                                type="color"
-                                id="legendTextColor"
-                                bind:value={legendTextColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                        <div class="setting-item appearance-item color-item">
-                            <label
-                                for="legendBgColor"
-                                title="Legend background color">Lgd BG:</label
-                            >
-                            <input
-                                type="color"
-                                id="legendBgColor"
-                                bind:value={legendBgColor}
-                                on:input={redrawCanvas}
-                            />
-                        </div>
-                    </div>
-                </div>
             {/if}
         </div>
     </div>
@@ -2178,7 +1917,6 @@
         --active-mode-border-color: var(--primary-hover-color);
         --canvas-border-color: #666;
     }
-
     .container {
         display: flex;
         flex-direction: column;
@@ -2190,7 +1928,14 @@
         width: 100%;
         box-sizing: border-box;
     }
-
+    h1 {
+        margin: 0.5em 0 0.3em 0;
+        font-size: 1.5em;
+        text-align: center;
+        width: 100%;
+        padding: 0 10px;
+        box-sizing: border-box;
+    }
     h2 {
         color: var(--text-color);
         font-size: 1.05em;
@@ -2199,6 +1944,10 @@
         text-align: center;
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 5px;
+    }
+    svg {
+        vertical-align: middle;
+        margin-right: 3px;
     }
 
     /* Main Layout */
@@ -2209,11 +1958,10 @@
         padding: 8px;
         gap: 10px;
         box-sizing: border-box;
-        flex-grow: 1;
-        min-height: 0;
-        /* Allow main-layout to grow/shrink */
-    }
 
+        flex-grow: 1;
+        min-height: 0; /* Allow main-layout to grow/shrink */
+    }
     .canvas-column {
         display: flex;
         flex-direction: column;
@@ -2221,28 +1969,21 @@
         width: 100%;
         box-sizing: border-box;
     }
-
     .canvas-area-wrapper {
         position: relative;
-        width: 100%;
-        /* Needed for absolute positioning of overlay */
+        width: 100%; /* Needed for absolute positioning of overlay */
     }
-
     .canvas-area {
         width: 100%;
         margin: 0 auto;
-        overflow: hidden;
-        /* Crucial: clips canvas drawing */
+        overflow: hidden; /* Crucial: clips canvas drawing */
         border: 1px solid var(--canvas-border-color);
         position: relative;
-        background-color: var(--bg-color);
-        /* Match page bg */
-        display: flex;
-        /* Center canvas if smaller */
+        background-color: var(--bg-color); /* Match page bg */
+        display: flex; /* Center canvas if smaller */
         justify-content: center;
         align-items: center;
     }
-
     .canvas-placeholder {
         display: flex;
         justify-content: center;
@@ -2255,14 +1996,11 @@
         padding: 20px;
         box-sizing: border-box;
     }
-
     canvas {
         display: block;
-        touch-action: manipulation;
-        /* Allow pinch zoom maybe? or none? */
+        touch-action: manipulation; /* Allow pinch zoom maybe? or none? */
         background-color: transparent;
-        image-rendering: pixelated;
-        /* width/height/aspect-ratio set via style attribute */
+        image-rendering: pixelated; /* width/height/aspect-ratio set via style attribute */
     }
 
     /* Controls */
@@ -2273,7 +2011,6 @@
         width: 100%;
         box-sizing: border-box;
     }
-
     .controls-section {
         border: 1px solid var(--border-color);
         border-radius: 6px;
@@ -2283,7 +2020,6 @@
         flex-direction: column;
         gap: 8px;
     }
-
     .controls {
         display: flex;
         flex-wrap: wrap;
@@ -2291,14 +2027,12 @@
         align-items: center;
         justify-content: center;
     }
-
     .controls > span {
         color: var(--text-secondary-color);
         margin-right: 4px;
         font-weight: 500;
         font-size: 0.9em;
     }
-
     .settings-row {
         justify-content: space-around;
         width: 100%;
@@ -2306,13 +2040,11 @@
         padding-bottom: 8px;
         margin-bottom: 8px;
     }
-
     .settings-row:last-child {
         border-bottom: none;
         padding-bottom: 0;
         margin-bottom: 0;
     }
-
     .setting-item {
         display: flex;
         align-items: center;
@@ -2321,24 +2053,20 @@
         flex-grow: 1;
         justify-content: center;
     }
-
     .group-management {
         border-top: 1px dashed var(--border-color);
         padding-top: 8px;
         margin-top: 8px;
     }
-
     .group-management button {
         margin-right: 4px;
     }
-
     .group-management button.active {
         border-color: var(--active-border-color);
         background-color: var(--active-bg-color);
         color: var(--text-color);
         font-weight: bold;
     }
-
     /* Mode selection moved */
     label {
         margin-right: 3px;
@@ -2347,7 +2075,6 @@
         white-space: nowrap;
         font-size: 0.85em;
     }
-
     input[type="number"],
     input[type="text"],
     select {
@@ -2359,31 +2086,25 @@
         font-size: 0.85em;
         box-sizing: border-box;
     }
-
     select {
         appearance: none;
         background-repeat: no-repeat;
         background-position: right 0.5em top 50%;
-        background-size: 0.8em auto;
-        padding-right: 1.8em;
-        /* Increased padding for arrow */
+        background-size: 0.5em auto;
+        padding-right: 1.6em;
     }
-
     input[type="number"] {
         width: 65px;
     }
-
     select {
         min-width: 50px;
         text-align: center;
         text-align-last: center;
     }
-
     input[type="text"] {
         flex-grow: 1;
         min-width: 70px;
     }
-
     button {
         padding: 6px 10px;
         cursor: pointer;
@@ -2400,12 +2121,10 @@
         align-items: center;
         justify-content: center;
     }
-
     button:hover:not(:disabled) {
         background-color: var(--primary-hover-color);
         border-color: var(--primary-hover-color);
     }
-
     button:disabled {
         background-color: #555;
         border-color: #555;
@@ -2413,36 +2132,30 @@
         cursor: not-allowed;
         opacity: 0.7;
     }
-
     button.secondary {
         background-color: var(--secondary-color);
         border-color: var(--secondary-color);
         color: var(--text-color);
     }
-
     button.secondary:hover:not(:disabled) {
         background-color: var(--secondary-hover-color);
         border-color: var(--secondary-hover-color);
     }
-
     button.danger {
         background-color: var(--danger-color);
         border-color: var(--danger-color);
         color: #fff;
     }
-
     button.danger:hover:not(:disabled) {
         background-color: var(--danger-hover-color);
         border-color: var(--danger-hover-color);
     }
-
     button.micro {
         padding: 2px 5px;
         font-size: 0.75em;
         line-height: 1.2;
         margin-left: -4px;
     }
-
     button.nudge {
         background-color: var(--warning-color);
         border-color: var(--warning-color);
@@ -2452,7 +2165,6 @@
         padding: 2px 6px;
         min-width: 30px;
     }
-
     button.nudge:hover:not(:disabled) {
         background-color: var(--warning-hover-color);
         border-color: var(--warning-hover-color);
@@ -2468,7 +2180,6 @@
         border-radius: 4px;
         border: 1px solid var(--border-color);
     }
-
     .zoom-pan-save {
         display: flex;
         gap: 5px;
@@ -2476,7 +2187,6 @@
         flex-wrap: wrap;
         justify-content: flex-start;
     }
-
     .mode-buttons {
         display: flex;
         gap: 5px;
@@ -2487,7 +2197,6 @@
         padding-top: 5px;
         margin-top: 3px;
     }
-
     .interaction-controls button {
         padding: 4px 8px;
         font-size: 0.9em;
@@ -2495,32 +2204,30 @@
         background-color: var(--secondary-color);
         border-color: var(--secondary-color);
     }
-
+    .interaction-controls button svg {
+        margin-right: 4px;
+    }
     .interaction-controls button:hover:not(:disabled) {
         background-color: var(--secondary-hover-color);
         border-color: var(--secondary-hover-color);
     }
-
     .interaction-controls button.active {
         background-color: var(--active-mode-bg-color);
         border-color: var(--active-mode-border-color);
         color: white;
     }
-
     .interaction-controls span.zoom-level {
         font-size: 0.8em;
         color: var(--text-secondary-color);
         margin: 0 5px;
         white-space: nowrap;
     }
-
     .interaction-controls .save-button {
         background-color: var(--primary-color);
         border-color: var(--primary-color);
         color: white;
         margin-left: auto;
     }
-
     .interaction-controls .save-button:hover:not(:disabled) {
         background-color: var(--primary-hover-color);
         border-color: var(--primary-hover-color);
@@ -2539,6 +2246,26 @@
         margin-top: 3px;
         line-height: 1.4;
     }
+    .instructions.info {
+        background-color: #2a4a52;
+        color: var(--info-text-color);
+        border-color: var(--info-border-color);
+    }
+    .instructions.warning {
+        background-color: var(--instruction-warning-bg-color);
+        color: var(--instruction-warning-text-color);
+        border-color: var(--instruction-warning-border-color);
+    }
+    .warning {
+        color: var(--danger-text-color);
+        background-color: var(--danger-bg-color);
+        border: 1px solid var(--danger-border-color);
+        padding: 5px;
+        border-radius: 3px;
+        text-align: center;
+        margin-top: 3px;
+        font-size: 0.8em;
+    }
 
     /* Nudge Overlay */
     .nudge-overlay {
@@ -2546,8 +2273,12 @@
         top: 10px;
         left: 10px;
         z-index: 10;
-        background-color: rgba(51, 51, 51, 0.85);
-        /* Slightly transparent background */
+        background-color: rgba(
+            51,
+            51,
+            51,
+            0.85
+        ); /* Slightly transparent background */
         border: 1px solid var(--border-color);
         border-radius: 5px;
         padding: 8px;
@@ -2557,7 +2288,6 @@
         align-items: center;
         gap: 5px;
     }
-
     .nudge-overlay > span {
         display: block;
         text-align: center;
@@ -2566,7 +2296,6 @@
         font-size: 0.9em;
         color: var(--text-secondary-color);
     }
-
     .nudge-grid {
         display: grid;
         grid-template-columns: repeat(3, auto);
@@ -2574,78 +2303,30 @@
         justify-content: center;
         margin-bottom: 5px;
     }
-
     .nudge-grid button:nth-child(1) {
         grid-column: 2;
     }
-
     .nudge-grid button:nth-child(2) {
         grid-column: 1;
         grid-row: 2;
     }
-
     .nudge-grid button:nth-child(3) {
         grid-column: 3;
         grid-row: 2;
     }
-
     .nudge-grid button:nth-child(4) {
         grid-column: 2;
         grid-row: 3;
     }
-
     .nudge-actions {
         display: flex;
         justify-content: center;
         gap: 10px;
         width: 100%;
     }
-
     .nudge-actions button.micro {
         margin-left: 0;
-    }
-
-    /* Remove neg margin */
-
-    /* Appearance Controls Styling */
-    .appearance-row {
-        gap: 5px 15px;
-        /* Adjust gap */
-    }
-
-    .appearance-item {
-        flex-grow: 1;
-        gap: 5px;
-    }
-
-    .appearance-item.color-item {
-        flex-basis: auto;
-        /* Let color pickers size naturally */
-        flex-grow: 0;
-    }
-
-    .appearance-item label {
-        min-width: 60px;
-        /* Align labels a bit */
-        text-align: right;
-        font-size: 0.8em;
-        /* Smaller labels */
-    }
-
-    .appearance-item input[type="number"] {
-        width: 55px;
-        /* Smaller number inputs */
-    }
-
-    .appearance-item input[type="color"] {
-        width: 35px;
-        height: 25px;
-        padding: 1px 2px;
-        border: 1px solid var(--input-border-color);
-        border-radius: 3px;
-        background-color: var(--input-bg-color);
-        cursor: pointer;
-    }
+    } /* Remove neg margin */
 
     /* Desktop Layout */
     @media (min-width: 992px) {
@@ -2656,7 +2337,6 @@
             padding: 15px;
             gap: 15px;
         }
-
         .canvas-column {
             flex: 3;
             order: 1;
@@ -2664,82 +2344,60 @@
             min-height: 0;
             display: grid;
             grid-template-rows: auto 1fr;
-        }
-
-        /* Adjusted max-height */
+        } /* Adjusted max-height */
         .canvas-area-wrapper {
             position: relative;
-            display: flex;
-            /* Let canvas-area center */
+            display: flex; /* Let canvas-area center */
             align-items: center;
             justify-content: center;
+            /* min-height: 150px; */
             min-height: 0;
-            /* max-height: calc(100vh - 150px); */
-            /* Example height constraint */
-            overflow: hidden;
-        }
-
-        /* Allow wrapper to grow */
+        } /* Allow wrapper to grow */
         .canvas-area {
             max-width: 100%;
             max-height: 100%;
             width: auto;
             height: auto;
             border: 1px solid var(--canvas-border-color);
-        }
-
-        /* Let canvas-area size naturally within wrapper */
+        } /* Let canvas-area size naturally within wrapper */
         canvas {
             /* Styles set dynamically, max-width/height handled by container */
         }
-
         .controls-column {
             flex: 1;
             max-width: 380px;
             width: auto;
             order: 2;
-            overflow-y: auto;
-            /* Allow scrolling if controls exceed height */
+            overflow-y: none;
             padding-right: 5px;
-            min-height: 0;
-            /* Allow flex to shrink */
-            max-height: calc(100vh - 30px);
-            /* Example height constraint */
+            min-height: 0; /* Allow flex to shrink */
         }
-
         .settings-row {
             flex-direction: row;
             align-items: center;
             flex-wrap: wrap;
         }
-
         .setting-item {
             flex-basis: auto;
             justify-content: flex-start;
             width: auto;
         }
-
         .controls {
             justify-content: flex-start;
         }
-
         .group-management {
             justify-content: flex-start;
         }
-
         .interaction-controls {
             flex-direction: row;
             align-items: center;
-        }
-
-        /* Side-by-side on desktop */
+        } /* Side-by-side on desktop */
         .mode-buttons {
             border-top: none;
             padding-top: 0;
             margin-top: 0;
             margin-left: 15px;
         }
-
         .zoom-pan-save .save-button {
             margin-left: auto;
         }
@@ -2749,92 +2407,73 @@
     @media (max-width: 991px) {
         .canvas-area {
             max-height: 70vh;
-        }
-
-        /* Limit canvas height on mobile too */
+        } /* Limit canvas height on mobile too */
         .setting-item {
             flex-basis: 100%;
             justify-content: space-between;
         }
-
         .setting-item label {
             flex-grow: 0;
             text-align: left;
             margin-bottom: 2px;
         }
-
         .setting-item input,
         .setting-item select {
             flex-grow: 1;
             width: auto;
         }
-
         input[type="number"] {
             width: 80px;
         }
-
         .mode-buttons {
             justify-content: center;
         }
-
         .mode-buttons button {
             flex-basis: calc(25% - 5px);
-        }
-
-        /* Try 4 buttons per row */
+        } /* Try 4 buttons per row */
         .group-management {
             justify-content: center;
         }
-
         .group-management button {
             width: auto;
         }
-
         .zoom-pan-save .save-button {
             margin-left: 5px;
         }
     }
-
     @media (max-width: 480px) {
+        h1 {
+            font-size: 1.3em;
+        }
         h2 {
             font-size: 1em;
         }
-
         .setting-item {
             flex-direction: column;
             align-items: stretch;
         }
-
         .setting-item label {
             margin-bottom: 3px;
         }
-
-        .appearance-item label {
-            min-width: unset;
-            text-align: left;
-        }
-
         .mode-buttons button {
             flex-basis: calc(50% - 4px);
-        }
-
-        /* Two per row */
+        } /* Two per row */
         .controls-section {
             padding: 8px;
         }
-
         .interaction-controls {
             padding: 3px;
         }
-
         .zoom-pan-save,
         .mode-buttons {
             gap: 3px;
         }
-
         button {
             padding: 5px 8px;
             font-size: 0.8em;
+        }
+        button svg {
+            margin-right: 2px;
         }
     }
 </style>
