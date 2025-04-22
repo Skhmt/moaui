@@ -7,6 +7,7 @@
 ## To do
 
 - Convert groups to tailwind? moa.js?
+- Put caliber and range in the legend, allow toggling group#
 - Pre-set sizes for MAM, deer, hog, coyote, car, truck, door, window
 - Notes/Dope section?
 - Round counter?
