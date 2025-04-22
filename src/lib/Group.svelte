@@ -1,4 +1,3 @@
-<!-- WIP - working pretty well so far.  -->
 <script lang="ts">
     import { onMount, onDestroy, tick } from "svelte";
 
@@ -10,9 +9,10 @@
     const RAD_TO_MRAD = 1000;
     const NUDGE_AMOUNT_DISPLAY_PIXELS = 2;
     const ZOOM_FACTOR = 1.2;
-    const MIN_ZOOM = 0.2; // Ensure min zoom is 100%
+    const MIN_ZOOM = 0.01; // Ensure min zoom is 100%
     const MAX_ZOOM = 20.0;
     const MIN_SCALE_LINE_PIXELS = 5;
+    const MAX_BUFFER_DIM = 4096; // Cap canvas buffer size for performance
 
     // --- Type Definitions ---
     interface Point {
@@ -74,11 +74,12 @@
     let canvasElement: HTMLCanvasElement | undefined;
     let canvasAreaElement: HTMLDivElement | undefined;
     let ctx: CanvasRenderingContext2D | null = null;
-    let imageElement: HTMLImageElement | null = null;
+    // let imageElement: HTMLImageElement | null = null; // Replaced by imageBitmap
+    let imageBitmap: ImageBitmap | null = null; // <<< Added for performance
     let mode: Mode = "loading";
     let scale: number | null = null;
     let referenceUnit: LinearUnit = "inches";
-    let referenceLength: number = 1;
+    let referenceLength: number = 1.0;
     let resultDisplayUnit: LinearUnit = "inches";
     let bulletDiameterUnit: DiameterUnit = "inches";
     let targetDistanceUnit: DistanceUnit = "yards";
@@ -108,11 +109,12 @@
     let dpr = 1;
 
     // --- Style State Variables (Added) ---
-    let legendFontSize: number = 11;
+    let legendFontSize: number = 12;
     let legendTextColor: string = "#e0e0e0";
     let legendBgColor: string = "#000000";
-    let legendBorderColor: string = "#555555"; // Currently unused in drawInfoBox, but available
-    let lineWidthBase: number = 1.5;
+    let legendBorderColor: string = "#555555";
+    // Currently unused in drawInfoBox, but available
+    let lineWidthBase: number = 2;
     let bulletHoleColor: string = "#FF4136";
     let inactiveBulletHoleColor: string = "rgba(255,65,54,0.7)"; // Derived or separate setting? Let's keep it derived for now.
     let selectedHoleColor: string = "#FFDC00";
@@ -121,7 +123,8 @@
     let aimPointColor: string = "#FF851B";
     let offsetLineColor: string = "#00BFFF";
     let offsetLineWidthMultiplier: number = 0.8;
-    let scaleLineColor: string = "#00FF00"; // Default 'lime'
+    let scaleLineColor: string = "#00FF00";
+    // Default 'lime'
     let scaleLineWidth: number = 2;
     let scaleMarkerSize: number = 6;
 
@@ -129,12 +132,10 @@
     let observer: ResizeObserver | null = null;
 
     onMount(() => {
-        /* ... dpr, observer, listeners ... */
         dpr = window.devicePixelRatio || 1;
         if (canvasAreaElement) {
-            // Check the new element
             observer = new ResizeObserver(handleResize);
-            observer.observe(canvasAreaElement); // Observe the container div
+            observer.observe(canvasAreaElement);
         }
 
         window.addEventListener("pointermove", handleWindowPointerMove);
@@ -143,49 +144,66 @@
     });
 
     onDestroy(() => {
-        /* ... cleanup ... */
         if (canvasAreaElement && observer) {
-            // Check the new element
-            observer.unobserve(canvasAreaElement); // Unobserve the container div
+            observer.unobserve(canvasAreaElement);
         }
         if (imageUrl && imageUrl.startsWith("blob:"))
             URL.revokeObjectURL(imageUrl);
         window.removeEventListener("pointermove", handleWindowPointerMove);
         window.removeEventListener("pointerup", handleWindowPointerUp);
         window.removeEventListener("keydown", handleKeyDown);
+
+        // <<< Close the bitmap when component is destroyed >>>
+        if (imageBitmap) {
+            imageBitmap.close();
+            imageBitmap = null;
+        }
     });
 
     function handleResize() {
-        // Display size changed
-        if (!canvasElement || !ctx) return;
-        // Calculate the new drawing buffer size needed based on display size and DPR
+        if (!canvasElement || !ctx || !imageBitmap) return; // Check imageBitmap
+
         const displayWidth = canvasElement.clientWidth;
         const displayHeight = canvasElement.clientHeight;
 
         if (displayWidth <= 0 || displayHeight <= 0) {
-            // Avoid resizing if the canvas is not visible or has no dimensions yet
             return;
         }
 
-        const newBufferWidth = Math.round(displayWidth * dpr);
-        const newBufferHeight = Math.round(displayHeight * dpr);
-        // Only resize the drawing buffer if it's different from the current size
-        // to avoid unnecessary resizing and clearing
+        // Recalculate buffer size based on current bitmap and display size/DPR, applying cap
+        const logicalWidth = imageBitmap.width;
+        const logicalHeight = imageBitmap.height;
+
+        let bufferWidth = logicalWidth * dpr;
+        let bufferHeight = logicalHeight * dpr;
+
+        if (bufferWidth > MAX_BUFFER_DIM || bufferHeight > MAX_BUFFER_DIM) {
+            const ratio = Math.min(
+                MAX_BUFFER_DIM / bufferWidth,
+                MAX_BUFFER_DIM / bufferHeight,
+            );
+            bufferWidth = Math.round(bufferWidth * ratio);
+            bufferHeight = Math.round(bufferHeight * ratio);
+        }
+
+        // Only resize if needed
         if (
-            canvasElement.width !== newBufferWidth ||
-            canvasElement.height !== newBufferHeight
+            canvasElement.width !== bufferWidth ||
+            canvasElement.height !== bufferHeight
         ) {
-            canvasElement.width = newBufferWidth;
-            canvasElement.height = newBufferHeight;
+            canvasElement.width = bufferWidth;
+            canvasElement.height = bufferHeight;
             console.log(
-                `Resized canvas buffer to ${newBufferWidth}x${newBufferHeight}`,
+                `Resized canvas buffer to ${bufferWidth}x${bufferHeight} (Display: ${displayWidth}x${displayHeight}, DPR: ${dpr})`,
             );
         }
-        redrawCanvas();
-    } // Display size changed
+
+        redrawCanvas(); // Redraw with new buffer size
+    }
 
     function setupCanvas(): void {
-        if (!canvasElement || !imageUrl) return;
+        if (!canvasElement || !imageUrl || !imageFile /* Need the file */)
+            return;
         const context = canvasElement.getContext("2d", { alpha: false });
         if (!context) {
             console.error("No 2D context");
@@ -194,43 +212,66 @@
             return;
         }
         ctx = context;
-        imageElement = new Image();
-        imageElement.onload = () => {
-            if (!imageElement || !canvasElement || !ctx) return;
-            const logicalWidth = imageElement.naturalWidth;
-            const logicalHeight = imageElement.naturalHeight;
 
-            // Set initial buffer size (Keep this from previous step)
-            canvasElement.width = logicalWidth * dpr;
-            canvasElement.height = logicalHeight * dpr;
+        // <<< Use createImageBitmap >>>
+        self.createImageBitmap(imageFile)
+            .then((bitmap) => {
+                // Close previous bitmap if it exists
+                if (imageBitmap) {
+                    imageBitmap.close();
+                }
+                imageBitmap = bitmap; // Store the new bitmap
 
-            viewCenter = { x: logicalWidth / 2, y: logicalHeight / 2 };
-            viewScale = 1.0;
-            lastViewport = null;
+                if (!canvasElement || !ctx || !imageBitmap) return;
 
-            if (groups.length === 0) addNewGroup();
+                const logicalWidth = imageBitmap.width;
+                const logicalHeight = imageBitmap.height;
 
-            requestAnimationFrame(() => {
-                // --- ADD setTimeout ---
-                // Defer calculations slightly to allow browser layout to stabilize
-                setTimeout(() => {
-                    // Add checks in case component/canvas is
-                    // destroyed before timeout runs
-                    if (!canvasElement || !imageElement) return;
-                    resetZoomToFit(); // This reads clientWidth/Height
-                    redrawCanvas(); // This calls calculateViewport which reads clientWidth/Height
-                }, 10); // Use a small
-                // delay (e.g., 10ms, maybe even 0)
-                // --- END setTimeout ---
+                // <<< Limit canvas buffer size >>>
+                let bufferWidth = logicalWidth * dpr;
+                let bufferHeight = logicalHeight * dpr;
+
+                if (
+                    bufferWidth > MAX_BUFFER_DIM ||
+                    bufferHeight > MAX_BUFFER_DIM
+                ) {
+                    const ratio = Math.min(
+                        MAX_BUFFER_DIM / bufferWidth,
+                        MAX_BUFFER_DIM / bufferHeight,
+                    );
+                    bufferWidth = Math.round(bufferWidth * ratio);
+                    bufferHeight = Math.round(bufferHeight * ratio);
+                    console.warn(
+                        `Large image detected. Capping canvas buffer to ${bufferWidth}x${bufferHeight}`,
+                    );
+                }
+
+                // Apply the (potentially capped) buffer size
+                canvasElement.width = bufferWidth;
+                canvasElement.height = bufferHeight;
+                // <<< End Limit >>>
+
+                viewCenter = { x: logicalWidth / 2, y: logicalHeight / 2 };
+                viewScale = 1.0;
+                lastViewport = null;
+
+                if (groups.length === 0) addNewGroup();
+
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        if (!canvasElement || !imageBitmap) return;
+                        resetZoomToFit();
+                        redrawCanvas();
+                    }, 10);
+                });
+                mode = "scaling";
+            })
+            .catch((err) => {
+                console.error("createImageBitmap error:", err);
+                alert("Image load error.");
+                reset();
             });
-            mode = "scaling";
-        };
-        imageElement.onerror = () => {
-            //
-            alert("Image load error.");
-            reset();
-        };
-        imageElement.src = imageUrl;
+        // <<< End createImageBitmap >>>
     }
 
     // --- Unit Conversion ---
@@ -307,62 +348,90 @@
     }
 
     // --- Viewport Calculation ---
+    // <<< Updated to use imageBitmap >>>
     function calculateViewport(): ViewportState | null {
         if (
             !canvasElement ||
-            !imageElement ||
-            !imageElement.complete ||
-            !imageElement.naturalWidth
+            !imageBitmap || // Use imageBitmap
+            !canvasElement.clientWidth || // Use display dimensions directly
+            !canvasElement.clientHeight
         )
             return null;
-        const imgW = imageElement.naturalWidth;
-        const imgH = imageElement.naturalHeight;
+
+        const imgW = imageBitmap.width; // Use bitmap width
+        const imgH = imageBitmap.height; // Use bitmap height
+
+        // Calculate source rect based on display size and view scale
         let sW = canvasElement.clientWidth / viewScale;
         let sH = canvasElement.clientHeight / viewScale;
+
+        // Clamp source size to image dimensions
         sW = Math.min(sW, imgW);
         sH = Math.min(sH, imgH);
+
+        // Calculate source top-left based on view center
         let sx = viewCenter.x - sW / 2;
         let sy = viewCenter.y - sH / 2;
+
+        // Clamp source top-left to image bounds
         sx = Math.max(0, Math.min(sx, imgW - sW));
         sy = Math.max(0, Math.min(sy, imgH - sH));
+
+        // Recalculate source size based on clamped top-left (handles edge cases)
         sW = Math.min(sW, imgW - sx);
         sH = Math.min(sH, imgH - sy);
+
+        // Ensure non-zero dimensions
         if (sW <= 0) sW = 1;
         if (sH <= 0) sH = 1;
+
         return { sx, sy, sWidth: sW, sHeight: sH };
     }
 
     // --- Drawing Functions ---
+    // <<< Updated to use imageBitmap >>>
     function redrawCanvas(): void {
         if (
             !ctx ||
             !canvasElement ||
-            !imageElement ||
-            !imageElement.complete ||
-            !imageElement.naturalWidth
+            !imageBitmap // Check bitmap
         )
             return;
+
         const vp = calculateViewport();
-        if (!vp) return;
-        lastViewport = vp;
+        if (!vp) return; // Viewport calculation failed (e.g., canvas not ready)
+
+        lastViewport = vp; // Store the calculated viewport state
         const { sx, sy, sWidth, sHeight } = vp;
-        const cW = canvasElement.width;
-        const cH = canvasElement.height;
+        const cW = canvasElement.width; // Target canvas buffer width
+        const cH = canvasElement.height; // Target canvas buffer height
+
         ctx.save();
+        // Clear canvas with white (or desired background)
         ctx.fillStyle = "#FFF";
         ctx.fillRect(0, 0, cW, cH);
+
+        // Disable smoothing for potentially sharper rendering when zooming
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(imageElement, sx, sy, sWidth, sHeight, 0, 0, cW, cH);
+
+        // Draw the calculated portion of the image bitmap onto the canvas buffer
+        ctx.drawImage(imageBitmap, sx, sy, sWidth, sHeight, 0, 0, cW, cH);
+
+        // Draw scaling line if present
         if (refLineStart && refLineEnd) {
             const sC = imageToCanvasCoords(refLineStart);
             const eC = imageToCanvasCoords(refLineEnd);
             if (sC && eC) drawScalingLine(ctx, sC, eC);
         }
+
+        // Draw group elements if scale is calculated
         if (scale) {
             groups.forEach((g, i) => drawGroupElements(ctx!, g, i, scale!));
         }
+
         ctx.restore();
     }
+
     function drawScalingLine(
         ctx: CanvasRenderingContext2D,
         startC: Point,
@@ -373,13 +442,13 @@
         ctx.moveTo(startC.x, startC.y);
         ctx.lineTo(endC.x, endC.y);
         // Use state variables for color and width
-        ctx.strokeStyle = scaleLineColor; // Use variable
-        ctx.lineWidth = Math.max(dpr, scaleLineWidth * dpr); // Use variable, ensure min width
+        ctx.strokeStyle = scaleLineColor;
+        ctx.lineWidth = Math.max(dpr, lineWidthBase * dpr);
         ctx.setLineDash([]);
         ctx.stroke();
         // Use state variable for marker color and size
-        ctx.fillStyle = scaleLineColor; // Use variable
-        const mS = Math.max(2 * dpr, scaleMarkerSize * dpr); // Use variable, ensure min size
+        ctx.fillStyle = scaleLineColor;
+        const mS = Math.max(2 * dpr, lineWidthBase * dpr);
         ctx.fillRect(startC.x - mS / 2, startC.y - mS / 2, mS, mS);
         ctx.fillRect(endC.x - mS / 2, endC.y - mS / 2, mS, mS);
         ctx.restore();
@@ -397,37 +466,42 @@
             referenceUnit,
         );
         const bRImg = (dUnit / 2) * sc;
-        if (!lastViewport) return; // Guard against missing viewport
+        if (!lastViewport) return;
+        // Guard against missing viewport
         const lPR = ctx.canvas.width / lastViewport.sWidth;
         const bRCvs = bRImg * lPR;
 
         // Use state variables for colors
         const hC = act ? bulletHoleColor : inactiveBulletHoleColor; // Use variable (consider making inactive adjustable too)
-        const hSC = selectedHoleColor; // Use variable
-        const ceC = act ? centroidColor : "rgba(0,116,217,0.7)"; // Use variable (adjust inactive?)
-        const aiC = act ? aimPointColor : "rgba(255,133,27,0.7)"; // Use variable (adjust inactive?)
-        const ofC = offsetLineColor; // Use variable
+        const hSC = selectedHoleColor;
+        // Use variable
+        const ceC = act ? centroidColor : "rgba(0,116,217,0.7)";
+        // Use variable (adjust inactive?)
+        const aiC = act ? aimPointColor : "rgba(255,133,27,0.7)";
+        // Use variable (adjust inactive?)
+        const ofC = offsetLineColor;
+        // Use variable
 
         // Use state variable for base line width
-        const lW = Math.max(0.5 * dpr, lineWidthBase * dpr); // Use variable
+        const lW = Math.max(0.5 * dpr, lineWidthBase * dpr);
+        // Use variable
 
         ctx.save();
-
         // --- Draw Bullet Holes ---
         g.bulletHolesPixels.forEach((hImg: Point, hIdx) => {
             const hCvs = imageToCanvasCoords(hImg);
             if (!hCvs) return;
             const isSelected = act && hIdx === selectedHoleIndex;
             ctx.strokeStyle = isSelected ? hSC : hC; // Use selected/normal color vars
+
             // Use base width and multiplier for selected hole
             ctx.lineWidth = isSelected
                 ? Math.max(dpr, lW * selectedHoleLineWidthMultiplier) // Use multiplier
                 : lW;
             ctx.beginPath();
-            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr, bRCvs), 0, Math.PI * 2); // Keep bullet radius based on diameter
+            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr, bRCvs), 0, Math.PI * 2); // Keep bullet radius based on
             ctx.stroke();
         });
-
         let ceCvs: Point | null = null;
         let aiCvs: Point | null = null;
         if (g.aimingPointPixels)
@@ -442,9 +516,12 @@
 
         // --- Draw Centroid Marker ---
         if (ceCvs) {
-            ctx.strokeStyle = ceC; // Use variable
-            ctx.lineWidth = lW; // Use base variable
-            const cs = Math.max(3 * dpr, 6 * dpr); // Keep size relative to DPR for visibility? Or make configurable? Let's keep for now.
+            ctx.strokeStyle = ceC;
+            // Use variable
+            ctx.lineWidth = lW;
+            // Use base variable
+            const cs = Math.max(3 * dpr, 6 * dpr);
+            // Keep size relative to DPR for visibility? Or make configurable? Let's keep for now.
             ctx.beginPath();
             ctx.moveTo(ceCvs.x - cs, ceCvs.y);
             ctx.lineTo(ceCvs.x + cs, ceCvs.y);
@@ -455,11 +532,14 @@
 
         // --- Draw Aiming Point Marker ---
         if (aiCvs) {
-            ctx.strokeStyle = aiC; // Use variable
-            ctx.lineWidth = lW; // Use base variable
-            const dS = Math.max(dpr, 3 * dpr); // Keep dash relative?
+            ctx.strokeStyle = aiC;
+            // Use variable
+            ctx.lineWidth = lW;
+            // Use base variable
+            const dS = Math.max(dpr, 3 * dpr);
+            // Keep dash relative?
             ctx.setLineDash([dS, dS]);
-            const cs = Math.max(4 * dpr, 8 * dpr); // Keep size relative?
+            const cs = Math.max(4 * dpr, lineWidthBase * 4 * dpr); // Keep size relative?
             ctx.beginPath();
             ctx.moveTo(aiCvs.x - cs, aiCvs.y);
             ctx.lineTo(aiCvs.x + cs, aiCvs.y);
@@ -467,16 +547,17 @@
             ctx.lineTo(aiCvs.x, aiCvs.y + cs);
             ctx.stroke();
             ctx.setLineDash([]);
-
             // --- Draw Offset Line ---
             if (ceCvs) {
-                ctx.strokeStyle = ofC; // Use variable
+                ctx.strokeStyle = ofC;
+                // Use variable
                 // Use base width and offset multiplier
                 ctx.lineWidth = Math.max(
                     0.5 * dpr,
                     lW * offsetLineWidthMultiplier,
                 ); // Use multiplier
-                const oD = Math.max(1.5 * dpr, 4 * dpr); // Keep dash relative?
+                const oD = Math.max(1.5 * dpr, 4 * dpr);
+                // Keep dash relative?
                 ctx.setLineDash([oD, oD]);
                 ctx.beginPath();
                 ctx.moveTo(aiCvs.x, aiCvs.y);
@@ -527,7 +608,7 @@
                 referenceUnit,
                 resultDisplayUnit,
             );
-            let l = `Spread: ${d.toFixed(3)} ${resultDisplayUnit}`;
+            let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
             if (angularUnitDisplay === "moa" && group.maxSpreadMOA !== null)
                 l += ` (${group.maxSpreadMOA.toFixed(2)} MOA)`;
             else if (
@@ -545,7 +626,7 @@
                 referenceUnit,
                 resultDisplayUnit,
             );
-            let l = `Mean Radius: ${d.toFixed(3)} ${resultDisplayUnit}`;
+            let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
             if (angularUnitDisplay === "moa" && group.meanRadiusMOA !== null)
                 l += ` (${group.meanRadiusMOA.toFixed(2)} MOA)`;
             else if (
@@ -562,7 +643,7 @@
                 resultDisplayUnit,
             );
             lines.push(
-                `Offset: ${d.toFixed(3)} ${resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
+                `Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
             );
         }
 
@@ -570,8 +651,10 @@
         // Use font size from styles
         const fS = styles.fontSize;
         const pad = 4; // Keep padding fixed? Or make configurable?
-        const lH = fS * 1.2; // Line height based on font size
-        context.font = `${fS}px sans-serif`; // Use parameter
+        const lH = fS * 1.2;
+        // Line height based on font size
+        context.font = `${fS}px sans-serif`;
+        // Use parameter
         let maxW = 0;
         lines.forEach((ln) => {
             maxW = Math.max(maxW, context.measureText(ln).width);
@@ -586,7 +669,9 @@
         ) {
             group.infoBoxSize = { width: boxW, height: boxH };
         }
-        context.restore();
+        context.restore(); // Restore here to avoid affecting anchor calc?
+
+        context.save(); // Re-save for drawing
 
         if (
             !group.infoBoxAnchorImage &&
@@ -599,65 +684,75 @@
                 y: group.centroidReal.y * scale,
             };
             const offX = 15; // Keep offset fixed?
+
+            // Calculate anchor based on image coords, but offset based on display pixels
+            const yOffsetPixels = boxH / 2;
+            const yOffsetImage =
+                (yOffsetPixels / context.canvas.clientHeight) *
+                lastViewport.sHeight;
+
             group.infoBoxAnchorImage = {
-                x: cenImg.x + offX,
-                y:
-                    cenImg.y -
-                    boxH /
-                        2 /
-                        (context.canvas.height / lastViewport.sHeight / dpr),
+                x: cenImg.x + offX, // Simple image offset for X
+                y: cenImg.y - yOffsetImage, // Convert Y offset to image space
             };
-            groups = groups;
+            groups = groups; // Trigger reactivity
         }
         let pos: Point | null = null;
         if (group.infoBoxAnchorImage) {
             pos = imageToCanvasCoords(group.infoBoxAnchorImage);
         }
 
-        if (!pos || !group.infoBoxSize) return; // Also check infoBoxSize exists
+        if (!pos || !group.infoBoxSize) {
+            context.restore(); // Make sure to restore if exiting early
+            return;
+        }
+
         // Clamp position based on calculated size (using dpr for render size)
         pos.x = Math.max(
             0,
             Math.min(
                 pos.x,
-                context.canvas.width - group.infoBoxSize.width * dpr,
+                context.canvas.width - group.infoBoxSize.width * dpr, // Use box size * dpr
             ),
         );
         pos.y = Math.max(
             0,
             Math.min(
                 pos.y,
-                context.canvas.height - group.infoBoxSize.height * dpr,
+                context.canvas.height - group.infoBoxSize.height * dpr, // Use box size * dpr
             ),
         );
-
-        context.save();
+        // context.save(); // Already saved
 
         // Use colors from style parameters
         // Add alpha transparency (e.g., E6 = 90%) to the background color
         const bgColorWithAlpha = styles.bgColor.startsWith("#")
             ? styles.bgColor + "E6"
-            : styles.bgColor; // Handle non-hex potentially? Basic hex handling for now.
+            : styles.bgColor; // Handle non-hex potentially?
         context.fillStyle = bgColorWithAlpha; // Use parameter + alpha
-        context.strokeStyle = styles.borderColor; // Use parameter
-        context.lineWidth = 1 * dpr; // Keep border width fixed? Or make configurable?
+        context.strokeStyle = styles.borderColor;
+        // Use parameter
+        context.lineWidth = 1 * dpr; // Keep border width fixed?
+        // Or make configurable?
 
         context.fillRect(
             pos.x,
             pos.y,
-            group.infoBoxSize.width * dpr,
-            group.infoBoxSize.height * dpr,
-        ); // Use calculated size * dpr
+            group.infoBoxSize.width * dpr, // Use calculated size * dpr
+            group.infoBoxSize.height * dpr, // Use calculated size * dpr
+        );
         context.strokeRect(
             pos.x,
             pos.y,
-            group.infoBoxSize.width * dpr,
-            group.infoBoxSize.height * dpr,
-        ); // Use calculated size * dpr
+            group.infoBoxSize.width * dpr, // Use calculated size * dpr
+            group.infoBoxSize.height * dpr, // Use calculated size * dpr
+        );
 
-        context.fillStyle = styles.textColor; // Use parameter
+        context.fillStyle = styles.textColor;
+        // Use parameter
         // Use font size from styles, adjusted by dpr
-        context.font = `${fS * dpr}px sans-serif`; // Use parameter * dpr
+        context.font = `${fS * dpr}px sans-serif`;
+        // Use parameter * dpr
         context.textAlign = "left";
         context.textBaseline = "top";
         lines.forEach((line, i) => {
@@ -668,7 +763,7 @@
                 pos!.y + pad * dpr + i * lH * dpr, // Use pad, line height * dpr
             );
         });
-        context.restore();
+        context.restore(); // Restore drawing state
     }
 
     // --- Event Handlers ---
@@ -677,17 +772,18 @@
     ): Point | null {
         if (!canvasElement) return null;
         const r = canvasElement.getBoundingClientRect();
-        if (!r.width || !r.height) return null;
+        if (!r.width || !r.height) return null; // Avoid division by zero if not displayed
         return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
+
     function handleFileSelect(e: Event) {
         const t = e.target as HTMLInputElement;
         const f = t.files?.[0];
         if (f && f.type.startsWith("image/")) {
-            imageFile = f;
+            imageFile = f; // Store the file object <<< Needed for createImageBitmap
             if (imageUrl && imageUrl.startsWith("blob:"))
                 URL.revokeObjectURL(imageUrl);
-            imageUrl = URL.createObjectURL(f);
+            imageUrl = URL.createObjectURL(f); // Still useful for display elsewhere maybe?
             resetStateForNewImage();
             mode = "loading";
             requestAnimationFrame(setupCanvas);
@@ -705,33 +801,41 @@
         if (!dCoords) return;
         isDraggingInfoBox = false;
         isPanning = false;
+        // Check for info box drag first
         for (let i = groups.length - 1; i >= 0; i--) {
             const g = groups[i];
             if (g.resultsValid && g.infoBoxAnchorImage && g.infoBoxSize) {
                 const aImg = g.infoBoxAnchorImage;
                 const sLog = g.infoBoxSize; // Logical size (pixels without dpr)
-                const aCvsLog = imageToCanvasCoords(aImg); // Canvas coords (pixels with dpr)
+                const aCvsRender = imageToCanvasCoords(aImg); // Anchor position in *render* coordinates (with dpr)
 
-                if (aCvsLog) {
-                    // Calculate the bounding box in *display* coordinates
-                    const bLogRenderWidth = sLog.width * dpr;
-                    const bLogRenderHeight = sLog.height * dpr;
-                    const dRect: Rect = {
-                        x:
-                            (aCvsLog.x / canvasElement.width) *
-                            canvasElement.clientWidth,
-                        y:
-                            (aCvsLog.y / canvasElement.height) *
-                            canvasElement.clientHeight,
-                        width:
-                            (bLogRenderWidth / canvasElement.width) *
-                            canvasElement.clientWidth,
-                        height:
-                            (bLogRenderHeight / canvasElement.height) *
-                            canvasElement.clientHeight,
+                if (aCvsRender) {
+                    // Calculate the bounding box in *render* coordinates
+                    const boxRenderWidth = sLog.width * dpr;
+                    const boxRenderHeight = sLog.height * dpr;
+
+                    // Pointer coords are in *display* coordinates. Convert box to display coords.
+                    const displayX =
+                        (aCvsRender.x / canvasElement.width) *
+                        canvasElement.clientWidth;
+                    const displayY =
+                        (aCvsRender.y / canvasElement.height) *
+                        canvasElement.clientHeight;
+                    const displayWidth =
+                        (boxRenderWidth / canvasElement.width) *
+                        canvasElement.clientWidth;
+                    const displayHeight =
+                        (boxRenderHeight / canvasElement.height) *
+                        canvasElement.clientHeight;
+
+                    const displayRect: Rect = {
+                        x: displayX,
+                        y: displayY,
+                        width: displayWidth,
+                        height: displayHeight,
                     };
 
-                    if (isPointInRect(dCoords, dRect)) {
+                    if (isPointInRect(dCoords, displayRect)) {
                         isDraggingInfoBox = true;
                         draggingGroupIndex = i;
                         dragStartPointerCoords = dCoords;
@@ -739,12 +843,14 @@
                         (e.target as HTMLElement).setPointerCapture(
                             e.pointerId,
                         );
-                        e.stopPropagation();
+                        e.stopPropagation(); // Prevent other actions
                         return;
                     }
                 }
             }
         }
+
+        // If not dragging info box, check for panning or drawing ref line
         if (mode === "panning") {
             isPanning = true;
             panStartPointerCoords = dCoords;
@@ -754,6 +860,7 @@
             e.stopPropagation();
             return;
         }
+
         const iCoords = canvasToImageCoords(dCoords);
         if (mode === "scaling" && iCoords) {
             (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -765,217 +872,271 @@
             return;
         }
     }
+
     function handleWindowPointerMove(e: PointerEvent) {
-        if (!canvasElement || !lastViewport) return;
+        if (!canvasElement || !lastViewport) return; // Need viewport info
         const curPtrD = getCanvasDisplayCoords(e);
         if (!curPtrD) return;
+
+        // --- Panning Logic ---
         if (
             isPanning &&
             panStartPointerCoords &&
             panStartViewCenter &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const dxD = curPtrD.x - panStartPointerCoords.x;
-            const dyD = curPtrD.y - panStartPointerCoords.y;
+            const dxD = curPtrD.x - panStartPointerCoords.x; // Delta in display pixels
+            const dyD = curPtrD.y - panStartPointerCoords.y; // Delta in display pixels
+
+            // Convert display pixel delta to image coordinate delta
             const dxI = (dxD / canvasElement.clientWidth) * lastViewport.sWidth;
             const dyI =
                 (dyD / canvasElement.clientHeight) * lastViewport.sHeight;
+
+            // Update view center based on starting point and image delta
             viewCenter.x = panStartViewCenter.x - dxI;
             viewCenter.y = panStartViewCenter.y - dyI;
-            clampViewCenter();
-            requestAnimationFrame(redrawCanvas);
-        } else if (
+
+            clampViewCenter(); // Keep view within bounds
+            requestAnimationFrame(redrawCanvas); // Redraw efficiently
+        }
+        // --- Info Box Dragging Logic ---
+        else if (
             isDraggingInfoBox &&
             draggingGroupIndex !== null &&
             dragStartPointerCoords &&
             dragStartInfoBoxAnchorImage &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const dxD = curPtrD.x - dragStartPointerCoords.x;
-            const dyD = curPtrD.y - dragStartPointerCoords.y;
+            const dxD = curPtrD.x - dragStartPointerCoords.x; // Delta in display pixels
+            const dyD = curPtrD.y - dragStartPointerCoords.y; // Delta in display pixels
+
             const g = groups[draggingGroupIndex];
-            if (g) {
+            if (g && lastViewport) {
+                // Check lastViewport exists
+                // Convert display pixel delta to image coordinate delta
                 const dxI =
                     (dxD / canvasElement.clientWidth) * lastViewport.sWidth;
                 const dyI =
                     (dyD / canvasElement.clientHeight) * lastViewport.sHeight;
+
+                // Calculate new anchor position in image coordinates
                 const nAX = dragStartInfoBoxAnchorImage.x + dxI;
                 const nAY = dragStartInfoBoxAnchorImage.y + dyI;
+
                 g.infoBoxAnchorImage = { x: nAX, y: nAY };
-                groups = groups;
-                requestAnimationFrame(redrawCanvas);
+                groups = groups; // Trigger reactivity
+                requestAnimationFrame(redrawCanvas); // Redraw efficiently
             }
-        } else if (
+        }
+        // --- Scaling Line Drawing Logic ---
+        else if (
             mode === "scaling" &&
             isDrawingRefLine &&
             refLineStart &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const curPtrI = canvasToImageCoords(curPtrD);
+            const curPtrI = canvasToImageCoords(curPtrD); // Convert to image coords
             if (curPtrI) {
-                refLineEnd = curPtrI;
-                redrawCanvas();
+                refLineEnd = curPtrI; // Update end point
+                requestAnimationFrame(redrawCanvas); // Redraw efficiently
             }
         }
     }
+
     function handleWindowPointerUp(e: PointerEvent) {
-        let drag = false;
-        let proc = false;
+        let wasDragging = false; // Flag to check if a drag operation just ended
+
+        // --- Panning End ---
         if (isPanning && canvasElement?.hasPointerCapture(e.pointerId)) {
-            drag = true;
-            proc = true;
             canvasElement.releasePointerCapture(e.pointerId);
             isPanning = false;
             panStartPointerCoords = null;
             panStartViewCenter = null;
-            if (canvasElement)
-                canvasElement.style.cursor =
-                    mode === "panning" ? "grab" : canvasCursor;
-            redrawCanvas();
-        } else if (
+            // Update cursor immediately
+            if (canvasElement) canvasElement.style.cursor = canvasCursor;
+            wasDragging = true;
+            // redrawCanvas(); // Redraw might not be needed if move handled it, but safe to keep
+        }
+        // --- Info Box Drag End ---
+        else if (
             isDraggingInfoBox &&
             canvasElement?.hasPointerCapture(e.pointerId)
         ) {
-            drag = true;
-            proc = true;
             canvasElement.releasePointerCapture(e.pointerId);
             isDraggingInfoBox = false;
             draggingGroupIndex = null;
             dragStartPointerCoords = null;
             dragStartInfoBoxAnchorImage = null;
-            redrawCanvas();
-        } else if (
+            wasDragging = true;
+            redrawCanvas(); // Redraw to finalize position
+        }
+        // --- Scaling Line Draw End ---
+        else if (
             mode === "scaling" &&
             isDrawingRefLine &&
             canvasElement?.hasPointerCapture(e.pointerId)
         ) {
-            drag = true;
-            proc = true;
             canvasElement.releasePointerCapture(e.pointerId);
             isDrawingRefLine = false;
             const finalPtrD = getCanvasDisplayCoords(e);
             if (finalPtrD) {
                 const finalI = canvasToImageCoords(finalPtrD);
-                if (finalI) refLineEnd = finalI;
+                if (finalI) refLineEnd = finalI; // Set final end point
             }
+
             if (refLineStart && refLineEnd) {
-                const ok = calculateScale();
+                const ok = calculateScale(); // Attempt to calculate scale
                 if (ok) {
-                    mode = "placingHoles";
+                    mode = "placingHoles"; // Move to next mode if scale is valid
                 } else {
+                    // Reset ref line if scale calculation failed (e.g., too short)
                     refLineStart = null;
                     refLineEnd = null;
                 }
             } else {
+                // Reset if something went wrong
                 refLineStart = null;
                 refLineEnd = null;
             }
-            redrawCanvas();
+            wasDragging = true;
+            redrawCanvas(); // Redraw to show final line or clear it
         }
-        if (drag) {
+
+        // Prevent click event immediately after drag/draw
+        if (wasDragging) {
             ignoreNextClick = true;
+            // Use a minimal timeout to reset the flag
             setTimeout(() => {
                 ignoreNextClick = false;
-            }, 50);
+            }, 50); // 50ms should be enough
         }
     }
+
     async function handleCanvasClick(e: MouseEvent) {
         if (ignoreNextClick) {
             ignoreNextClick = false;
-            return;
+            return; // Skip click if it followed a drag/draw end
         }
-        if (isDrawingRefLine || isPanning) return;
-        if (!canvasElement || activeGroupIndex === -1) return;
+
+        // Ignore clicks during panning or drawing ref line (handled by pointer down/up/move)
+        if (isPanning || isDrawingRefLine) return;
+
+        if (!canvasElement || activeGroupIndex === -1) return; // Need canvas and active group
+
         const dCoords = getCanvasDisplayCoords(e);
-        if (!dCoords) return;
+        if (!dCoords) return; // Click coords invalid
+
         const iCoords = canvasToImageCoords(dCoords);
-        if (!iCoords) return;
+        if (!iCoords) return; // Image coords invalid
+
         const g = groups[activeGroupIndex];
+
+        // --- Placing Holes ---
         if (mode === "placingHoles" && scale) {
-            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale };
+            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Calculate real coords
             g.bulletHolesPixels.push(iCoords);
             g.bulletHolesReal.push(rCoords);
-            selectedHoleIndex = g.bulletHolesPixels.length - 1;
+            selectedHoleIndex = g.bulletHolesPixels.length - 1; // Select the new hole
             invalidateResults(activeGroupIndex);
-            groups = groups;
-            await tick();
-            calculateGroupResults(activeGroupIndex);
+            groups = groups; // Trigger reactivity
+            await tick(); // Wait for Svelte update cycle
+            calculateGroupResults(activeGroupIndex); // Recalculate after adding hole
             redrawCanvas();
-        } else if (mode === "placingAim" && scale) {
-            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale };
+        }
+        // --- Placing Aim Point ---
+        else if (mode === "placingAim" && scale) {
+            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Calculate real coords
             g.aimingPointPixels = iCoords;
             g.aimingPointReal = rCoords;
             invalidateResults(activeGroupIndex);
-            groups = groups;
-            await tick();
-            calculateGroupResults(activeGroupIndex);
-            mode = "placingHoles";
+            groups = groups; // Trigger reactivity
+            await tick(); // Wait for Svelte update cycle
+            calculateGroupResults(activeGroupIndex); // Recalculate after adding aim point
+            mode = "placingHoles"; // Switch back to placing holes automatically
             redrawCanvas();
-        } else if (mode === "selectingHole") {
-            if (!scale || !lastViewport) return;
-            const lPR = canvasElement.width / lastViewport.sWidth;
-            const cRL = 15 * dpr;
-            const cRI = cRL / lPR;
-            const cRISq = cRI * cRI;
+        }
+        // --- Selecting Hole ---
+        else if (mode === "selectingHole") {
+            if (!scale || !lastViewport || !canvasElement.width) return; // Need scale and viewport
+
+            // Define click tolerance in render pixels (adjust as needed)
+            const clickToleranceRenderPixels = 15 * dpr; // Tolerance in buffer pixels
+            // Convert tolerance to image pixels
+            const clickToleranceImagePixels =
+                (clickToleranceRenderPixels / canvasElement.width) *
+                lastViewport.sWidth;
+            const clickToleranceImagePixelsSq =
+                clickToleranceImagePixels * clickToleranceImagePixels;
+
             let found = false;
-            let cIdx = -1;
-            let mDSq = Infinity;
+            let closestIndex = -1;
+            let minDistanceSq = Infinity;
+
+            // Iterate through holes to find the closest one within tolerance
             for (let i = g.bulletHolesPixels.length - 1; i >= 0; i--) {
                 const h = g.bulletHolesPixels[i];
                 const dx = iCoords.x - h.x;
                 const dy = iCoords.y - h.y;
-                const dSq = dx * dx + dy * dy;
-                if (dSq < cRISq && dSq < mDSq) {
-                    mDSq = dSq;
-                    cIdx = i;
+                const dSq = dx * dx + dy * dy; // Distance squared in image coordinates
+
+                if (dSq < clickToleranceImagePixelsSq && dSq < minDistanceSq) {
+                    minDistanceSq = dSq;
+                    closestIndex = i;
                     found = true;
                 }
             }
-            selectedHoleIndex = found ? cIdx : null;
-            redrawCanvas();
+
+            selectedHoleIndex = found ? closestIndex : null; // Select closest or deselect
+            redrawCanvas(); // Redraw to show selection change
         }
     }
+
     function handleKeyDown(e: KeyboardEvent) {
         if (
             activeGroupIndex === -1 ||
+            selectedHoleIndex === null || // Only act if a hole is selected
             !scale ||
             !lastViewport ||
             !canvasElement
         )
             return;
-        if (selectedHoleIndex !== null) {
-            let dxI = 0;
-            let dyI = 0;
-            const nudX =
-                (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientWidth) *
-                lastViewport.sWidth;
-            const nudY =
-                (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientHeight) *
-                lastViewport.sHeight;
-            switch (e.key) {
-                case "ArrowUp":
-                    dyI = -nudY;
-                    break;
-                case "ArrowDown":
-                    dyI = nudY;
-                    break;
-                case "ArrowLeft":
-                    dxI = -nudX;
-                    break;
-                case "ArrowRight":
-                    dxI = nudX;
-                    break;
-                case "Delete":
-                case "Backspace":
-                    e.preventDefault();
-                    deleteSelectedHole();
-                    return;
-                default:
-                    return;
-            }
-            e.preventDefault();
-            nudgeSelectedHolePx(dxI, dyI);
+
+        let dxI = 0; // Nudge delta in image pixels
+        let dyI = 0; // Nudge delta in image pixels
+
+        // Calculate nudge amount in image pixels based on display pixel constant
+        const nudgeXImage =
+            (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientWidth) *
+            lastViewport.sWidth;
+        const nudgeYImage =
+            (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientHeight) *
+            lastViewport.sHeight;
+
+        switch (e.key) {
+            case "ArrowUp":
+                dyI = -nudgeYImage;
+                break;
+            case "ArrowDown":
+                dyI = nudgeYImage;
+                break;
+            case "ArrowLeft":
+                dxI = -nudgeXImage;
+                break;
+            case "ArrowRight":
+                dxI = nudgeXImage;
+                break;
+            case "Delete":
+            case "Backspace":
+                e.preventDefault(); // Prevent browser back navigation on Backspace
+                deleteSelectedHole();
+                return; // Don't nudge after delete
+            default:
+                return; // Ignore other keys
         }
+
+        e.preventDefault(); // Prevent arrow keys from scrolling the page
+        nudgeSelectedHolePx(dxI, dyI); // Apply the nudge
     }
 
     // --- Logic ---
@@ -991,15 +1152,22 @@
         }
         const dx = refLineEnd.x - refLineStart.x;
         const dy = refLineEnd.y - refLineStart.y;
-        const lenPx = Math.sqrt(dx * dx + dy * dy);
+        const lenPx = Math.sqrt(dx * dx + dy * dy); // Length in image pixels
         if (lenPx < MIN_SCALE_LINE_PIXELS) {
-            alert(`Ref line < ${MIN_SCALE_LINE_PIXELS} pixels.`);
+            alert(
+                `Reference line is too short (must be >= ${MIN_SCALE_LINE_PIXELS} pixels). Please redraw.`,
+            );
             scale = null;
             return false;
         }
-        const newSc = lenPx / referenceLength;
-        if (newSc === scale) return true;
+        const newSc = lenPx / referenceLength; // pixels per referenceUnit
+
+        // Only recalculate if scale changes significantly (optional, avoids tiny updates)
+        // if (scale && Math.abs(newSc - scale) < 1e-6) return true;
+
         scale = newSc;
+
+        // Recalculate real coordinates and invalidate results for all groups
         groups.forEach((g, i) => {
             g.bulletHolesReal = g.bulletHolesPixels.map((p) => ({
                 x: p.x / scale!,
@@ -1012,19 +1180,26 @@
                   }
                 : null;
             invalidateResults(i);
-            g.infoBoxAnchorImage = null; // Recalculate position after scale change
+            // Reset info box anchor so it recalculates based on new scale/positions
+            g.infoBoxAnchorImage = null;
         });
-        groups = groups;
+        groups = groups; // Trigger reactivity
+
+        // Use tick to ensure Svelte updates before recalculating results
         tick().then(() => {
-            groups.forEach((_, i) => calculateGroupResults(i));
-            redrawCanvas();
+            groups.forEach((_, i) => calculateGroupResults(i)); // Recalculate all groups
+            redrawCanvas(); // Redraw with new scale and results
         });
-        console.log(`Scale: ${scale.toFixed(3)} px/${referenceUnit}`);
+
+        console.log(`Scale set: ${scale.toFixed(3)} pixels/${referenceUnit}`);
         return true;
     }
+
     function calculateGroupResults(idx: number) {
-        if (idx < 0 || idx >= groups.length || !scale) return;
+        if (idx < 0 || idx >= groups.length || !scale) return; // Need valid index and scale
         const g = groups[idx];
+
+        // Reset previous results
         g.centroidReal = null;
         g.meanRadius = null;
         g.maxSpread = null;
@@ -1033,96 +1208,118 @@
         g.maxSpreadMOA = null;
         g.maxSpreadMRAD = null;
         g.offsetFromAim = null;
-        g.resultsValid = false;
+        g.resultsValid = false; // Mark as invalid until calculations complete
+
         if (g.bulletHolesReal.length === 0) {
-            groups = groups;
-            redrawCanvas();
-            return;
+            groups = groups; // Trigger reactivity (maybe needed for info box hide)
+            redrawCanvas(); // Redraw to clear old results
+            return; // No calculations needed for empty group
         }
-        let sX = 0,
-            sY = 0;
+
+        // --- Calculate Centroid ---
+        let sumX = 0,
+            sumY = 0;
         g.bulletHolesReal.forEach((h) => {
-            sX += h.x;
-            sY += h.y;
+            sumX += h.x;
+            sumY += h.y;
         });
         const n = g.bulletHolesReal.length;
-        const cX = sX / n;
-        const cY = sY / n;
-        g.centroidReal = { x: cX, y: cY };
-        let sD = 0;
+        const centroidX = sumX / n;
+        const centroidY = sumY / n;
+        g.centroidReal = { x: centroidX, y: centroidY };
+
+        // --- Calculate Mean Radius ---
+        let sumDistFromCentroid = 0;
         g.bulletHolesReal.forEach((h) => {
-            const dx = h.x - cX,
-                dy = h.y - cY;
-            sD += Math.sqrt(dx * dx + dy * dy);
+            const dx = h.x - centroidX;
+            const dy = h.y - centroidY;
+            sumDistFromCentroid += Math.sqrt(dx * dx + dy * dy);
         });
-        g.meanRadius = sD / n;
+        g.meanRadius = sumDistFromCentroid / n;
+
+        // --- Calculate Max Spread (Extreme Spread) ---
         if (n >= 2) {
-            let mDSq = 0;
-            for (let i = 0; i < n; i++)
+            let maxDistSq = 0;
+            for (let i = 0; i < n; i++) {
                 for (let j = i + 1; j < n; j++) {
                     const dx = g.bulletHolesReal[i].x - g.bulletHolesReal[j].x;
                     const dy = g.bulletHolesReal[i].y - g.bulletHolesReal[j].y;
-                    mDSq = Math.max(mDSq, dx * dx + dy * dy);
+                    maxDistSq = Math.max(maxDistSq, dx * dx + dy * dy);
                 }
-            g.maxSpread = Math.sqrt(mDSq);
+            }
+            g.maxSpread = Math.sqrt(maxDistSq);
         } else {
-            g.maxSpread = null;
+            g.maxSpread = null; // Not applicable for < 2 shots
         }
+
+        // --- Calculate Angular Measurements (MOA/MRAD) ---
         if (targetDistance > 0) {
-            const dMM = convertLinearValue(
+            const distMM = convertLinearValue(
                 targetDistance,
                 targetDistanceUnit,
                 "mm",
             );
-            if (dMM > 0) {
+            if (distMM > 0) {
+                // Mean Radius Angular
                 if (g.meanRadius !== null) {
-                    const rMM = convertLinearValue(
+                    const radiusMM = convertLinearValue(
                         g.meanRadius,
                         referenceUnit,
                         "mm",
                     );
-                    const aR = rMM / dMM;
-                    g.meanRadiusMOA = aR * RAD_TO_MOA;
-                    g.meanRadiusMRAD = aR * RAD_TO_MRAD;
+                    const angleRad = radiusMM / distMM; // Small angle approximation
+                    g.meanRadiusMOA = angleRad * RAD_TO_MOA;
+                    g.meanRadiusMRAD = angleRad * RAD_TO_MRAD;
                 }
+                // Max Spread Angular
                 if (g.maxSpread !== null) {
-                    const sMM = convertLinearValue(
+                    const spreadMM = convertLinearValue(
                         g.maxSpread,
                         referenceUnit,
                         "mm",
                     );
-                    const aR = sMM / dMM;
-                    g.maxSpreadMOA = aR * RAD_TO_MOA;
-                    g.maxSpreadMRAD = aR * RAD_TO_MRAD;
+                    const angleRad = spreadMM / distMM; // Small angle approximation
+                    g.maxSpreadMOA = angleRad * RAD_TO_MOA;
+                    g.maxSpreadMRAD = angleRad * RAD_TO_MRAD;
                 }
             }
         } else {
+            // Clear angular results if distance is zero or invalid
             g.meanRadiusMOA = null;
             g.meanRadiusMRAD = null;
             g.maxSpreadMOA = null;
             g.maxSpreadMRAD = null;
         }
+
+        // --- Calculate Offset from Aim Point ---
         if (g.aimingPointReal && g.centroidReal) {
-            const dx = g.centroidReal.x - g.aimingPointReal.x;
+            const dx = g.centroidReal.x - g.aimingPointReal.x; // Centroid relative to Aim Point
             const dy = g.centroidReal.y - g.aimingPointReal.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            let aR = Math.atan2(-dy, dx);
-            if (aR < 0) aR += 2 * Math.PI;
+            const dist = Math.sqrt(dx * dx + dy * dy); // Offset distance
+
+            // Calculate angle (0 degrees = right, 90 = up, 180 = left, 270 = down)
+            let angleRad = Math.atan2(-dy, dx); // Use -dy because canvas Y increases downwards
+            if (angleRad < 0) angleRad += 2 * Math.PI; // Normalize to 0-2PI
+            const angleDeg = angleRad * (180 / Math.PI);
+
             g.offsetFromAim = {
                 distance: dist,
-                angleDegrees: aR * (180 / Math.PI),
+                angleDegrees: angleDeg,
             };
         } else {
-            g.offsetFromAim = null;
+            g.offsetFromAim = null; // No aim point set
         }
-        g.resultsValid = true;
-        groups = groups;
-        redrawCanvas();
+
+        g.resultsValid = true; // Mark results as valid
+        groups = groups; // Trigger reactivity
+        redrawCanvas(); // Redraw to display updated results
     }
+
     function invalidateResults(idx: number) {
         if (idx >= 0 && idx < groups.length && groups[idx].resultsValid) {
             groups[idx].resultsValid = false;
-            groups = groups;
+            groups = groups; // Trigger reactivity
+            // Optionally clear specific fields if needed, but calculateGroupResults handles reset
         }
     }
 
@@ -1148,259 +1345,404 @@
             infoBoxSize: null,
         };
         groups = [...groups, nG];
-        activeGroupIndex = groups.length - 1;
-        selectedHoleIndex = null;
-        if (!imageUrl) mode = "loading";
+        activeGroupIndex = groups.length - 1; // Switch to the new group
+        selectedHoleIndex = null; // Deselect any holes
+
+        // Set mode based on current state
+        if (!imageBitmap)
+            mode = "loading"; // Should not happen if called after load, but safe check
         else if (!scale) mode = "scaling";
         else mode = "placingHoles";
-        redrawCanvas();
+
+        redrawCanvas(); // Redraw to show the new group (likely empty)
     }
+
     function switchToGroup(idx: number) {
         if (idx >= 0 && idx < groups.length && idx !== activeGroupIndex) {
             activeGroupIndex = idx;
-            selectedHoleIndex = null;
-            if (scale) mode = "placingHoles";
-            else if (imageUrl) mode = "scaling";
-            redrawCanvas();
+            selectedHoleIndex = null; // Deselect hole when switching group
+
+            // Set mode based on current state for the switched-to group
+            if (!imageBitmap) mode = "loading";
+            else if (!scale) mode = "scaling";
+            else mode = "placingHoles"; // Default interaction mode when switching
+
+            redrawCanvas(); // Redraw to highlight the active group
         }
     }
+
     async function deleteGroup(idx: number) {
-        if (idx < 0 || idx >= groups.length) return;
+        if (idx < 0 || idx >= groups.length) return; // Invalid index
+
         const gName = groups[idx]?.name ?? `Group ${idx + 1}`;
-        if (!confirm(`Delete ${gName}?`)) return;
-        groups.splice(idx, 1);
+        if (
+            !confirm(
+                `Are you sure you want to delete ${gName}? This cannot be undone.`,
+            )
+        )
+            return;
+
+        groups.splice(idx, 1); // Remove the group
+
         if (groups.length === 0) {
-            activeGroupIndex = -1;
-            addNewGroup();
+            // If last group was deleted, add a new one
+            activeGroupIndex = -1; // Reset index before adding
+            addNewGroup(); // This will set activeGroupIndex to 0
         } else {
-            if (activeGroupIndex === idx)
+            // Adjust active index if necessary
+            if (activeGroupIndex === idx) {
+                // If deleted group was active, activate the previous one (or first one)
                 activeGroupIndex = Math.max(0, idx - 1);
-            else if (activeGroupIndex > idx) activeGroupIndex--;
-            if (activeGroupIndex >= groups.length)
+            } else if (activeGroupIndex > idx) {
+                // If deleted group was before the active one, decrement active index
+                activeGroupIndex--;
+            }
+            // Ensure active index is valid after potential adjustments
+            if (activeGroupIndex >= groups.length) {
                 activeGroupIndex = groups.length - 1;
-            groups = groups;
-            await tick();
-            switchToGroup(activeGroupIndex);
+            }
+
+            groups = groups; // Trigger reactivity
+            await tick(); // Wait for Svelte update
+            // No need to call switchToGroup, just update index and redraw
             redrawCanvas();
         }
     }
 
     // --- Point Deletion ---
     async function deleteSelectedHole() {
-        if (activeGroupIndex === -1 || selectedHoleIndex === null) return;
+        if (activeGroupIndex === -1 || selectedHoleIndex === null) return; // Nothing selected
+
         const g = groups[activeGroupIndex];
-        if (selectedHoleIndex >= g.bulletHolesPixels.length) {
-            selectedHoleIndex = null;
+        // Double-check index validity before splicing
+        if (
+            selectedHoleIndex < 0 ||
+            selectedHoleIndex >= g.bulletHolesPixels.length
+        ) {
+            selectedHoleIndex = null; // Invalid index, just deselect
             return;
         }
+
+        // Remove the hole from both pixel and real arrays
         g.bulletHolesPixels.splice(selectedHoleIndex, 1);
         g.bulletHolesReal.splice(selectedHoleIndex, 1);
-        selectedHoleIndex = null;
-        invalidateResults(activeGroupIndex);
-        groups = groups;
-        await tick();
-        calculateGroupResults(activeGroupIndex);
-        redrawCanvas();
+
+        selectedHoleIndex = null; // Deselect after deletion
+        invalidateResults(activeGroupIndex); // Mark results as needing update
+        groups = groups; // Trigger reactivity
+
+        await tick(); // Wait for Svelte update
+        calculateGroupResults(activeGroupIndex); // Recalculate results
+        redrawCanvas(); // Redraw the canvas
     }
 
     // --- Nudging ---
+    // <<< Updated clamping to use imageBitmap >>>
     async function nudgeSelectedHolePx(dxI: number, dyI: number) {
         if (
-            scale &&
+            scale && // Need scale for real coords update
             activeGroupIndex !== -1 &&
             selectedHoleIndex !== null &&
             selectedHoleIndex <
-                groups[activeGroupIndex].bulletHolesPixels.length
+                groups[activeGroupIndex].bulletHolesPixels.length // Check valid index
         ) {
             const g = groups[activeGroupIndex];
             const hPx = g.bulletHolesPixels[selectedHoleIndex];
+
+            // Update pixel coordinates
             hPx.x += dxI;
             hPx.y += dyI;
-            if (imageElement) {
-                hPx.x = Math.max(0, Math.min(hPx.x, imageElement.naturalWidth));
-                hPx.y = Math.max(
-                    0,
-                    Math.min(hPx.y, imageElement.naturalHeight),
-                );
+
+            // Clamp pixel coordinates to image bounds
+            if (imageBitmap) {
+                // Check if bitmap exists
+                hPx.x = Math.max(0, Math.min(hPx.x, imageBitmap.width)); // Use bitmap width
+                hPx.y = Math.max(0, Math.min(hPx.y, imageBitmap.height)); // Use bitmap height
             }
+
+            // Update corresponding real coordinates
             const hRl = g.bulletHolesReal[selectedHoleIndex];
             hRl.x = hPx.x / scale;
             hRl.y = hPx.y / scale;
-            invalidateResults(activeGroupIndex);
-            groups = groups;
-            await tick();
-            calculateGroupResults(activeGroupIndex);
-            redrawCanvas();
+
+            invalidateResults(activeGroupIndex); // Mark results as needing update
+            groups = groups; // Trigger reactivity
+
+            await tick(); // Wait for Svelte update
+            calculateGroupResults(activeGroupIndex); // Recalculate results
+            redrawCanvas(); // Redraw canvas
         }
     }
 
     // --- Zoom Controls ---
+    // <<< Updated check to use imageBitmap >>>
     function zoom(factor: number, cX?: number, cY?: number) {
-        if (!imageElement || !canvasElement || !lastViewport) return;
-        const curS = viewScale;
-        const newS = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, curS * factor));
-        if (newS === curS) return;
-        let imgX = viewCenter.x;
-        let imgY = viewCenter.y;
+        if (!imageBitmap || !canvasElement || !lastViewport) return; // Need bitmap, canvas, viewport
+
+        const currentScale = viewScale;
+        const newScale = Math.max(
+            MIN_ZOOM,
+            Math.min(MAX_ZOOM, currentScale * factor),
+        );
+
+        if (newScale === currentScale) return; // No change
+
+        let zoomCenterX = viewCenter.x; // Default to current view center
+        let zoomCenterY = viewCenter.y;
+
+        // If client coordinates are provided (e.g., from mouse wheel), zoom towards that point
         if (cX !== undefined && cY !== undefined) {
-            const dC = getCanvasDisplayCoords({
+            const displayCoords = getCanvasDisplayCoords({
                 clientX: cX,
                 clientY: cY,
             } as PointerEvent);
-            if (dC) {
-                const iC = canvasToImageCoords(dC);
-                if (iC) {
-                    imgX = iC.x;
-                    imgY = iC.y;
+            if (displayCoords) {
+                const imageCoords = canvasToImageCoords(displayCoords);
+                if (imageCoords) {
+                    zoomCenterX = imageCoords.x;
+                    zoomCenterY = imageCoords.y;
                 }
             }
         }
-        viewCenter.x = imgX - (imgX - viewCenter.x) * (curS / newS);
-        viewCenter.y = imgY - (imgY - viewCenter.y) * (curS / newS);
-        viewScale = newS;
-        clampViewCenter();
-        redrawCanvas();
+
+        // Adjust view center based on zoom point and scale change
+        // Formula: newCenter = zoomPoint - (zoomPoint - oldCenter) * (oldScale / newScale)
+        viewCenter.x =
+            zoomCenterX -
+            (zoomCenterX - viewCenter.x) * (currentScale / newScale);
+        viewCenter.y =
+            zoomCenterY -
+            (zoomCenterY - viewCenter.y) * (currentScale / newScale);
+
+        viewScale = newScale; // Apply the new scale
+
+        clampViewCenter(); // Ensure the new view center is valid
+        redrawCanvas(); // Redraw with the new scale and center
     }
+
     function zoomIn(e?: MouseEvent) {
         zoom(ZOOM_FACTOR, e?.clientX, e?.clientY);
     }
+
     function zoomOut(e?: MouseEvent) {
         zoom(1 / ZOOM_FACTOR, e?.clientX, e?.clientY);
     }
+
+    // <<< Updated to use imageBitmap >>>
     function resetZoomToFit() {
-        if (!imageElement || !canvasElement) return;
-        const imgW = imageElement.naturalWidth;
-        const imgH = imageElement.naturalHeight;
-        const dW = canvasElement.clientWidth;
-        const dH = canvasElement.clientHeight;
-        let fitScale = 1.0;
-        // Default to 100%
-        if (imgW > 0 && imgH > 0 && dW > 0 && dH > 0) {
-            fitScale = Math.min(dW / imgW, dH / imgH);
+        if (
+            !imageBitmap ||
+            !canvasElement ||
+            !canvasElement.clientWidth ||
+            !canvasElement.clientHeight
+        )
+            return; // Need bitmap and display size
+
+        const imgW = imageBitmap.width;
+        const imgH = imageBitmap.height;
+        const displayW = canvasElement.clientWidth;
+        const displayH = canvasElement.clientHeight;
+
+        let fitScale = 1.0; // Default to 100%
+
+        // Calculate scale to fit image within display area
+        if (imgW > 0 && imgH > 0 && displayW > 0 && displayH > 0) {
+            fitScale = Math.min(displayW / imgW, displayH / imgH);
         }
-        // *** CHANGE: Ensure zoom is at least 1.0 (or fit scale if image is smaller than display) ***
+
+        // Apply the fit scale, respecting min/max zoom limits
         viewScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale));
+        // Center the view on the image
         viewCenter = { x: imgW / 2, y: imgH / 2 };
-        clampViewCenter();
-        // Clamp needed after scale change
+
+        clampViewCenter(); // Clamp center after scale change
+        // No redraw needed here, caller (setupCanvas or resetZoom button) will redraw
     }
+
     function resetZoom() {
-        if (!imageElement) return;
+        if (!imageBitmap) return;
         resetZoomToFit();
-        redrawCanvas();
+        redrawCanvas(); // Explicitly redraw after reset button click
     }
+
     function handleWheel(e: WheelEvent) {
-        e.preventDefault();
-        const delta = -Math.sign(e.deltaY);
+        e.preventDefault(); // Prevent page scrolling
+        const delta = -Math.sign(e.deltaY); // Normalize wheel direction (-1 or 1)
         const factor = delta > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
-        zoom(factor, e.clientX, e.clientY);
+        zoom(factor, e.clientX, e.clientY); // Zoom towards cursor position
     }
 
     // --- Scale Controls ---
     function enterScaleMode() {
         mode = "scaling";
-        refLineStart = null;
+        refLineStart = null; // Clear existing line
         refLineEnd = null;
         isDrawingRefLine = false;
-        selectedHoleIndex = null;
-        redrawCanvas();
+        selectedHoleIndex = null; // Deselect any hole
+        redrawCanvas(); // Redraw to reflect mode change
     }
 
     // --- View Clamping ---
+    // <<< Updated to use imageBitmap >>>
     function clampViewCenter() {
-        if (!imageElement || !canvasElement || !imageElement.naturalWidth)
-            return;
-        const imgW = imageElement.naturalWidth;
-        const imgH = imageElement.naturalHeight;
-        const sW = canvasElement.clientWidth / viewScale;
-        const sH = canvasElement.clientHeight / viewScale;
-        const minX = sW / 2;
-        const maxX = imgW - sW / 2;
-        const minY = sH / 2;
-        const maxY = imgH - sH / 2;
-        if (imgW > sW)
+        if (
+            !imageBitmap ||
+            !canvasElement ||
+            !canvasElement.clientWidth ||
+            !canvasElement.clientHeight
+        )
+            return; // Need bitmap and display size
+
+        const imgW = imageBitmap.width;
+        const imgH = imageBitmap.height;
+
+        // Calculate the size of the viewport in image pixels
+        const viewportWidthImg = canvasElement.clientWidth / viewScale;
+        const viewportHeightImg = canvasElement.clientHeight / viewScale;
+
+        // Calculate min/max allowed center coordinates
+        const minX = viewportWidthImg / 2;
+        const maxX = imgW - viewportWidthImg / 2;
+        const minY = viewportHeightImg / 2;
+        const maxY = imgH - viewportHeightImg / 2;
+
+        // Clamp X coordinate if image is wider than viewport
+        if (imgW > viewportWidthImg) {
             viewCenter.x = Math.max(minX, Math.min(viewCenter.x, maxX));
-        else viewCenter.x = imgW / 2;
-        if (imgH > sH)
+        } else {
+            // If image is narrower than viewport, center it
+            viewCenter.x = imgW / 2;
+        }
+
+        // Clamp Y coordinate if image is taller than viewport
+        if (imgH > viewportHeightImg) {
             viewCenter.y = Math.max(minY, Math.min(viewCenter.y, maxY));
-        else viewCenter.y = imgH / 2;
+        } else {
+            // If image is shorter than viewport, center it
+            viewCenter.y = imgH / 2;
+        }
     }
 
     // --- Utility ---
+    // <<< Updated to include imageBitmap reset >>>
     function resetStateForNewImage() {
+        // Image and scale related
         scale = null;
         refLineStart = null;
         refLineEnd = null;
         isDrawingRefLine = false;
+        if (imageBitmap) {
+            // Close existing bitmap
+            imageBitmap.close();
+            imageBitmap = null;
+        }
+
+        // Group related
         groups = [];
         activeGroupIndex = -1;
         nextGroupId = 0;
         selectedHoleIndex = null;
+
+        // Interaction states
         isDraggingInfoBox = false;
         draggingGroupIndex = null;
         dragStartPointerCoords = null;
         dragStartInfoBoxAnchorImage = null;
         ignoreNextClick = false;
-        viewScale = 1.0;
-        viewCenter = { x: 0, y: 0 };
-        lastViewport = null;
         isPanning = false;
         panStartPointerCoords = null;
         panStartViewCenter = null;
-        mode = "loading";
+
+        // Viewport related
+        viewScale = 1.0;
+        viewCenter = { x: 0, y: 0 }; // Will be reset in setupCanvas
+        lastViewport = null;
+
+        mode = "loading"; // Set initial mode
     }
+
     function reset() {
-        if (!confirm("Start over? Data lost.")) return;
-        resetStateForNewImage();
-        if (ctx && canvasElement)
+        if (
+            !confirm(
+                "Are you sure you want to start over? All current data will be lost.",
+            )
+        )
+            return;
+
+        resetStateForNewImage(); // Reset all internal state
+
+        // Clear canvas visually
+        if (ctx && canvasElement) {
             ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        if (imageUrl && imageUrl.startsWith("blob:"))
+            // Optionally reset canvas dimensions? Maybe not needed if new image loads.
+            // canvasElement.width = 0;
+            // canvasElement.height = 0;
+        }
+
+        // Clear file input and URL references
+        if (imageUrl && imageUrl.startsWith("blob:")) {
             URL.revokeObjectURL(imageUrl);
+        }
         imageFile = null;
         imageUrl = null;
-        imageElement = null;
-        ctx = null;
-        if (fileInputEl) fileInputEl.value = "";
+        // imageBitmap is cleared in resetStateForNewImage
+
+        ctx = null; // Release context reference
+
+        if (fileInputEl) fileInputEl.value = ""; // Clear the file input field
     }
 
     // --- Input Handlers ---
     function handleDiameterChange() {
+        // Only redraw if scale is set (meaning holes are potentially visible)
         if (scale) redrawCanvas();
     }
+
     function handleResultUnitChange() {
+        // Redraw if any group has results displayed
         if (groups.some((g) => g.resultsValid)) redrawCanvas();
     }
+
     function handleAngularUnitChange() {
+        // Redraw if any group has results displayed (as angular units might change)
         if (groups.some((g) => g.resultsValid)) redrawCanvas();
     }
+
     function handleTargetDistanceChange() {
+        // Recalculate results for all groups if distance is valid
         if (targetDistance >= 0) {
-            groups.forEach((_, i) => calculateGroupResults(i));
+            groups.forEach((_, i) => calculateGroupResults(i)); // This will redraw
         } else {
+            // If distance becomes invalid, clear angular results but keep linear ones
             groups.forEach((g) => {
                 g.maxSpreadMOA = null;
                 g.maxSpreadMRAD = null;
                 g.meanRadiusMOA = null;
                 g.meanRadiusMRAD = null;
+                // Keep g.resultsValid = true if linear results exist
             });
-            groups = groups;
-            redrawCanvas();
+            groups = groups; // Trigger reactivity
+            redrawCanvas(); // Redraw to update info boxes
         }
     }
+
     function handleReferenceInputChange() {
+        // If a reference line exists, try recalculating scale
         if (refLineStart && refLineEnd) {
-            calculateScale();
+            calculateScale(); // This recalculates results and redraws
         } else {
+            // If no ref line, changing inputs invalidates scale and results
             scale = null;
-            mode = "scaling";
+            mode = "scaling"; // Force user to redraw ref line
             groups.forEach((g, i) => {
                 invalidateResults(i);
-                g.infoBoxAnchorImage = null;
+                g.infoBoxAnchorImage = null; // Reset info box position
             });
-            groups = groups;
-            redrawCanvas();
+            groups = groups; // Trigger reactivity
+            redrawCanvas(); // Redraw to clear results/overlays
         }
     }
+
     function isPointInRect(p: Point, r: Rect): boolean {
         return (
             p.x >= r.x &&
@@ -1411,23 +1753,35 @@
     }
 
     // --- Export Canvas Function ---
+    // <<< Updated to use imageBitmap >>>
     function exportCanvasAsJpeg(): void {
-        if (!canvasElement || !imageElement || !ctx) {
-            alert("Canvas/image not ready.");
+        // <<< Check imageBitmap >>>
+        if (!canvasElement || !imageBitmap || !ctx) {
+            alert("Canvas or image data is not ready for export.");
             return;
         }
+
+        // Create a new canvas matching the original image dimensions
         const exportCanvas = document.createElement("canvas");
-        exportCanvas.width = imageElement.naturalWidth;
-        exportCanvas.height = imageElement.naturalHeight;
+        exportCanvas.width = imageBitmap.width; // Use bitmap dimensions
+        exportCanvas.height = imageBitmap.height; // Use bitmap dimensions
+
         const exportCtx = exportCanvas.getContext("2d");
         if (!exportCtx) {
-            alert("Failed export context.");
+            alert("Failed to create export canvas context.");
             return;
         }
-        exportCtx.imageSmoothingEnabled = false;
-        exportCtx.fillStyle = "#FFFFFF"; // White BG for JPEG
+
+        // Setup export canvas context
+        exportCtx.imageSmoothingEnabled = false; // Consistent with display
+        exportCtx.fillStyle = "#FFFFFF"; // Set white background for JPEG
         exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-        exportCtx.drawImage(imageElement, 0, 0);
+
+        // Draw the original image bitmap onto the export canvas
+        exportCtx.drawImage(imageBitmap, 0, 0);
+
+        // --- Draw Overlays (Scaling Line, Groups, Info Boxes) ---
+        // Use image coordinates directly, no DPR scaling needed for export
         exportCtx.save();
 
         // --- Draw Scaling Line (Export) ---
@@ -1435,13 +1789,12 @@
             exportCtx.beginPath();
             exportCtx.moveTo(refLineStart.x, refLineStart.y);
             exportCtx.lineTo(refLineEnd.x, refLineEnd.y);
-            // Use state variables
-            exportCtx.strokeStyle = scaleLineColor; // Use variable
-            exportCtx.lineWidth = scaleLineWidth; // Use variable (no dpr needed)
+            exportCtx.strokeStyle = scaleLineColor;
+            exportCtx.lineWidth = scaleLineWidth; // Use base width, no dpr
             exportCtx.setLineDash([]);
             exportCtx.stroke();
-            exportCtx.fillStyle = scaleLineColor; // Use variable
-            const mSize = scaleMarkerSize; // Use variable (no dpr needed)
+            exportCtx.fillStyle = scaleLineColor;
+            const mSize = scaleMarkerSize; // Use base size, no dpr
             exportCtx.fillRect(
                 refLineStart.x - mSize / 2,
                 refLineStart.y - mSize / 2,
@@ -1459,58 +1812,59 @@
         // --- Draw Group Elements (Export) ---
         if (scale) {
             groups.forEach((group, index) => {
-                const isActive = index === activeGroupIndex;
+                const isActive = index === activeGroupIndex; // Use for color selection
                 const dUnit = convertLinearValue(
                     bulletDiameter,
                     bulletDiameterUnit,
                     referenceUnit,
                 );
-                const bRadiusImg = (dUnit / 2) * scale!;
+                const bRadiusImg = (dUnit / 2) * scale!; // Bullet radius in image pixels
 
-                // Use state variables for colors (inactive colors might need adjustment/separate vars)
+                // Colors (use active/inactive from state)
                 const hColor = isActive
                     ? bulletHoleColor
-                    : inactiveBulletHoleColor; // Use variable
-                // Note: Selected hole isn't relevant for static export, use normal color.
+                    : inactiveBulletHoleColor;
                 const cenColor = isActive
                     ? centroidColor
-                    : "rgba(0,116,217,0.7)"; // Use variable
+                    : "rgba(0,116,217,0.7)";
                 const aimColor = isActive
                     ? aimPointColor
-                    : "rgba(255,133,27,0.7)"; // Use variable
-                const offColor = offsetLineColor; // Use variable
+                    : "rgba(255,133,27,0.7)";
+                const offColor = offsetLineColor;
 
-                // Use state variable for line width (no dpr needed)
-                const lWidth = lineWidthBase; // Use variable
+                // Line width (use base width from state, no dpr)
+                const lWidth = lineWidthBase;
 
-                // --- Draw Bullet Holes (Export) ---
-                exportCtx.strokeStyle = hColor; // Use variable
-                exportCtx.lineWidth = lWidth; // Use variable
+                // Draw Bullet Holes
+                exportCtx.strokeStyle = hColor;
+                exportCtx.lineWidth = lWidth;
                 group.bulletHolesPixels.forEach((holeImg: Point) => {
                     exportCtx.beginPath();
                     exportCtx.arc(
                         holeImg.x,
                         holeImg.y,
-                        Math.max(1, bRadiusImg), // Ensure min radius
+                        Math.max(1, bRadiusImg),
                         0,
                         Math.PI * 2,
                     );
                     exportCtx.stroke();
                 });
 
-                // --- Draw Centroid/Aim/Offset (Export) ---
+                // Get Centroid and Aim Point in Image Pixels
                 let cenImgPx: Point | null = null;
-                let aimImgPx: Point | null = group.aimingPointPixels;
-                if (group.resultsValid && group.centroidReal)
+                let aimImgPx: Point | null = group.aimingPointPixels; // Already in image pixels
+                if (group.resultsValid && group.centroidReal) {
                     cenImgPx = {
                         x: group.centroidReal.x * scale!,
                         y: group.centroidReal.y * scale!,
                     };
+                }
 
+                // Draw Centroid Marker
                 if (cenImgPx) {
-                    exportCtx.strokeStyle = cenColor; // Use variable
-                    exportCtx.lineWidth = lWidth; // Use variable
-                    const cs = 6; // Keep marker size fixed for export? Or use state var?
+                    exportCtx.strokeStyle = cenColor;
+                    exportCtx.lineWidth = lWidth;
+                    const cs = 6; // Fixed size for export? Or use state var?
                     exportCtx.beginPath();
                     exportCtx.moveTo(cenImgPx.x - cs, cenImgPx.y);
                     exportCtx.lineTo(cenImgPx.x + cs, cenImgPx.y);
@@ -1518,11 +1872,13 @@
                     exportCtx.lineTo(cenImgPx.x, cenImgPx.y + cs);
                     exportCtx.stroke();
                 }
+
+                // Draw Aim Point Marker and Offset Line
                 if (aimImgPx) {
-                    exportCtx.strokeStyle = aimColor; // Use variable
-                    exportCtx.lineWidth = lWidth; // Use variable
-                    exportCtx.setLineDash([3, 3]); // Keep dash fixed?
-                    const cs = 8; // Keep marker size fixed?
+                    exportCtx.strokeStyle = aimColor;
+                    exportCtx.lineWidth = lWidth;
+                    exportCtx.setLineDash([3, 3]); // Fixed dash for export?
+                    const cs = 8; // Fixed size for export?
                     exportCtx.beginPath();
                     exportCtx.moveTo(aimImgPx.x - cs, aimImgPx.y);
                     exportCtx.lineTo(aimImgPx.x + cs, aimImgPx.y);
@@ -1530,12 +1886,13 @@
                     exportCtx.lineTo(aimImgPx.x, aimImgPx.y + cs);
                     exportCtx.stroke();
                     exportCtx.setLineDash([]);
+
+                    // Draw Offset Line if Centroid exists
                     if (cenImgPx) {
-                        exportCtx.strokeStyle = offColor; // Use variable
-                        // Use base width and offset multiplier (no dpr)
+                        exportCtx.strokeStyle = offColor;
                         exportCtx.lineWidth =
-                            lWidth * offsetLineWidthMultiplier; // Use variable multiplier
-                        exportCtx.setLineDash([4, 4]); // Keep dash fixed?
+                            lWidth * offsetLineWidthMultiplier; // Use multiplier
+                        exportCtx.setLineDash([4, 4]); // Fixed dash for export?
                         exportCtx.beginPath();
                         exportCtx.moveTo(aimImgPx.x, aimImgPx.y);
                         exportCtx.lineTo(cenImgPx.x, cenImgPx.y);
@@ -1550,8 +1907,8 @@
                     group.infoBoxAnchorImage &&
                     group.infoBoxSize
                 ) {
+                    // Regenerate text lines (same logic as drawInfoBox)
                     const lines: string[] = [];
-                    // ... (Regenerate text lines as before) ...
                     lines.push(
                         `${group.name} (${group.bulletHolesReal.length} shots)`,
                     );
@@ -1561,7 +1918,7 @@
                             referenceUnit,
                             resultDisplayUnit,
                         );
-                        let l = `Spread: ${d.toFixed(3)} ${resultDisplayUnit}`;
+                        let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit}`;
                         if (
                             angularUnitDisplay === "moa" &&
                             group.maxSpreadMOA !== null
@@ -1580,7 +1937,7 @@
                             referenceUnit,
                             resultDisplayUnit,
                         );
-                        let l = `Mean Radius: ${d.toFixed(3)} ${resultDisplayUnit}`;
+                        let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit}`;
                         if (
                             angularUnitDisplay === "moa" &&
                             group.meanRadiusMOA !== null
@@ -1600,15 +1957,16 @@
                             resultDisplayUnit,
                         );
                         lines.push(
-                            `Offset: ${d.toFixed(3)} ${resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
+                            `Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
                         );
                     }
 
-                    // Use calculated size (no dpr)
+                    // Use stored size (logical pixels)
                     const { width: boxW, height: boxH } = group.infoBoxSize;
-                    let infoX = group.infoBoxAnchorImage.x;
+                    let infoX = group.infoBoxAnchorImage.x; // Anchor is in image pixels
                     let infoY = group.infoBoxAnchorImage.y;
-                    // Clamp position (no dpr)
+
+                    // Clamp position to export canvas bounds
                     infoX = Math.max(
                         0,
                         Math.min(infoX, exportCanvas.width - boxW),
@@ -1618,25 +1976,26 @@
                         Math.min(infoY, exportCanvas.height - boxH),
                     );
 
-                    // Use state variables for styles (no dpr)
-                    const fSize = legendFontSize; // Use variable
+                    // Style variables (no dpr needed)
+                    const fSize = legendFontSize;
                     const pad = 4;
                     const lH = fSize * 1.2;
-
-                    // Use state variables for colors
                     const bgColorWithAlpha = legendBgColor.startsWith("#")
-                        ? legendBgColor + "E6" // Use variable + alpha
+                        ? legendBgColor + "E6"
                         : legendBgColor;
-                    const LborderColor = legendBorderColor; // Use variable
-                    const LtextColor = legendTextColor; // Use variable
+                    const LborderColor = legendBorderColor;
+                    const LtextColor = legendTextColor;
 
-                    exportCtx.fillStyle = bgColorWithAlpha; // Use variable + alpha
-                    exportCtx.strokeStyle = LborderColor; // Use variable
-                    exportCtx.lineWidth = 1; // Keep border fixed?
+                    // Draw box
+                    exportCtx.fillStyle = bgColorWithAlpha;
+                    exportCtx.strokeStyle = LborderColor;
+                    exportCtx.lineWidth = 1; // Fixed border width for export
                     exportCtx.fillRect(infoX, infoY, boxW, boxH);
                     exportCtx.strokeRect(infoX, infoY, boxW, boxH);
-                    exportCtx.fillStyle = LtextColor; // Use variable
-                    exportCtx.font = `${fSize}px sans-serif`; // Use variable (no dpr)
+
+                    // Draw text
+                    exportCtx.fillStyle = LtextColor;
+                    exportCtx.font = `${fSize}px sans-serif`; // Use base font size
                     exportCtx.textAlign = "left";
                     exportCtx.textBaseline = "top";
                     lines.forEach((line, i) => {
@@ -1649,19 +2008,22 @@
                 }
             });
         }
-        exportCtx.restore();
+        exportCtx.restore(); // Restore context after drawing overlays
 
-        // ... (rest of export logic: toDataURL, link click) ...
+        // --- Generate Data URL and Trigger Download ---
         try {
-            const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9); // JPEG format
+            const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9); // Quality = 0.9
             const link = document.createElement("a");
-            link.download = `${imageFile?.name.replace(/\.[^/.]+$/, "") ?? "target"}-analysis.jpg`; // .jpg extension
+            // Generate filename (use original filename if available)
+            const baseName =
+                imageFile?.name.replace(/\.[^/.]+$/, "") ?? "target-analysis";
+            link.download = `${baseName}.jpg`;
             link.href = dataUrl;
-            link.click();
-            link.remove();
+            link.click(); // Simulate click to trigger download
+            link.remove(); // Clean up the link element
         } catch (error) {
-            console.error("Error exporting:", error);
-            alert("Failed export.");
+            console.error("Error exporting canvas:", error);
+            alert("Failed to export image as JPEG.");
         }
     }
 
@@ -1670,7 +2032,6 @@
         activeGroupIndex !== -1 && activeGroupIndex < groups.length
             ? groups[activeGroupIndex]
             : null;
-    $: canDeleteHole = activeGroupIndex !== -1 && selectedHoleIndex !== null;
     $: canvasCursor = isPanning
         ? "grabbing"
         : isDraggingInfoBox
@@ -1680,12 +2041,17 @@
             : mode === "scaling"
               ? "crosshair"
               : mode === "placingHoles"
-                ? "copy"
+                ? "copy" // Or your preferred cursor for adding points
                 : mode === "placingAim"
                   ? "crosshair"
                   : mode === "selectingHole"
                     ? "pointer"
                     : "default";
+
+    // Reactive calculation for canvas aspect ratio display
+    $: canvasAspectRatio = imageBitmap
+        ? imageBitmap.width / imageBitmap.height
+        : 16 / 9; // Default aspect ratio
 </script>
 
 <div class="container">
@@ -1701,8 +2067,14 @@
                         accept="image/*"
                         on:change={handleFileSelect}
                     />
+                    <button
+                        class="danger micro"
+                        on:click={reset}
+                        title="Reset all data & image">Reset All</button
+                    >
                 </div>
             </div>
+
             {#if imageUrl}
                 <div class="interaction-controls">
                     <div class="zoom-pan-save">
@@ -1710,28 +2082,30 @@
                             on:click={exportCanvasAsJpeg}
                             title="Save full image + overlays as JPG"
                             class="save-button"
+                            disabled={!imageBitmap}
                         >
-                            💾 Save
+                            💾 Save JPG
                         </button>
                         <button
                             on:click={zoomIn}
-                            disabled={viewScale >= MAX_ZOOM}
+                            disabled={viewScale >= MAX_ZOOM || !imageBitmap}
                             title="Zoom In (+Wheel Up)">➕</button
                         >
-                        <span class="zoom-level"
+                        <span class="zoom-level" title="Current Zoom Level"
                             >{Math.round(viewScale * 100)}%</span
                         >
                         <button
                             on:click={zoomOut}
-                            disabled={viewScale <= MIN_ZOOM}
+                            disabled={viewScale <= MIN_ZOOM || !imageBitmap}
                             title="Zoom Out (+Wheel Down)">➖</button
                         >
                         <button
                             on:click={resetZoom}
+                            disabled={!imageBitmap}
                             title="Fit Zoom & Reset Pan">🔍 Fit</button
                         >
                     </div>
-                    <div class="controls">
+                    <div class="controls scale-mode-controls">
                         <label for="refLength">Ref Len:</label>
                         <input
                             type="number"
@@ -1740,10 +2114,13 @@
                             min="1"
                             step="1"
                             on:input={handleReferenceInputChange}
+                            disabled={!imageBitmap}
+                            style:width="60px"
                         />
                         <select
                             bind:value={referenceUnit}
                             on:change={handleReferenceInputChange}
+                            disabled={!imageBitmap}
                         >
                             <option value="inches">in</option>
                             <option value="cm">cm</option>
@@ -1753,66 +2130,71 @@
                             class="secondary"
                             class:active={mode === "scaling"}
                             on:click={enterScaleMode}
-                            title="Draw ref line"
+                            title={mode === "scaling"
+                                ? "Click-drag on image to draw reference line"
+                                : "Draw reference line based on known length"}
+                            disabled={!imageBitmap}
                         >
-                            📏 {#if mode === "scaling"}Drawing{:else}Draw Ref
-                                Line{/if}
+                            📏 {#if mode === "scaling"}Drawing Ref...{:else}Draw
+                                Ref Line{/if}
                         </button>
-                    </div>
-                    <div class="mode-buttons">
-                        <button
-                            class:active={mode === "panning"}
-                            on:click={() => {
-                                mode =
-                                    mode === "panning"
-                                        ? scale
-                                            ? "placingHoles"
-                                            : "scaling"
-                                        : "panning";
-                                selectedHoleIndex = null;
-                                redrawCanvas();
-                            }}
-                            title="Toggle Pan Mode (Drag canvas)"
-                        >
-                            🤚 Pan
-                        </button>
-                        <button
-                            class:active={mode === "placingHoles"}
-                            on:click={() => {
-                                mode = "placingHoles";
-                                selectedHoleIndex = null;
-                                redrawCanvas();
-                            }}
-                            title="Place holes"
-                            disabled={!scale}
-                        >
-                            ⭕ Holes
-                        </button>
-                        <button
-                            class:active={mode === "placingAim"}
-                            on:click={() => {
-                                mode = "placingAim";
-                                selectedHoleIndex = null;
-                                redrawCanvas();
-                            }}
-                            title="Set aim point"
-                            disabled={!scale}
-                        >
-                            🎯 Aim Pt
-                        </button>
-                        <button
-                            class:active={mode === "selectingHole"}
-                            on:click={() => {
-                                mode = "selectingHole";
-                                redrawCanvas();
-                            }}
-                            title="Select/Move hole"
-                            disabled={!scale}
-                        >
-                            👆 Select
-                        </button>
+                        <div class="mode-buttons">
+                            <button
+                                class:active={mode === "panning"}
+                                on:click={() => {
+                                    mode =
+                                        mode === "panning"
+                                            ? scale
+                                                ? "placingHoles"
+                                                : "scaling"
+                                            : "panning";
+                                    selectedHoleIndex = null;
+                                    redrawCanvas();
+                                }}
+                                title="Toggle Pan Mode (Click-drag canvas to move view)"
+                                disabled={!imageBitmap}
+                            >
+                                🤚 Pan
+                            </button>
+                            <button
+                                class:active={mode === "placingHoles"}
+                                on:click={() => {
+                                    mode = "placingHoles";
+                                    selectedHoleIndex = null;
+                                    redrawCanvas();
+                                }}
+                                title="Place bullet holes (Click on image)"
+                                disabled={!scale}
+                            >
+                                ⭕ Holes
+                            </button>
+                            <button
+                                class:active={mode === "placingAim"}
+                                on:click={() => {
+                                    mode = "placingAim";
+                                    selectedHoleIndex = null;
+                                    redrawCanvas();
+                                }}
+                                title="Set aiming point (Click on image)"
+                                disabled={!scale}
+                            >
+                                🎯 Aim Pt
+                            </button>
+                            <button
+                                class:active={mode === "selectingHole"}
+                                on:click={() => {
+                                    mode = "selectingHole";
+                                    redrawCanvas();
+                                }}
+                                title="Select/Move hole (Click near a hole, use arrows/buttons to nudge/delete)"
+                                disabled={!scale}
+                            >
+                                👆 Select
+                            </button>
+                        </div>
                     </div>
                 </div>
+
                 <div class="canvas-area-wrapper">
                     <div
                         class="canvas-area"
@@ -1826,10 +2208,9 @@
                             style:cursor={canvasCursor}
                             style:max-width="100%"
                             style:max-height="100%"
-                            style:aspect-ratio={imageElement
-                                ? imageElement.naturalWidth /
-                                  imageElement.naturalHeight
-                                : "2/1"}
+                            style:aspect-ratio={canvasAspectRatio}
+                            style:width={imageBitmap ? "auto" : "100%"}
+                            style:height={imageBitmap ? "auto" : "auto"}
                         ></canvas>
                     </div>
                     {#if mode === "selectingHole" && selectedHoleIndex !== null}
@@ -1880,12 +2261,12 @@
                                         selectedHoleIndex = null;
                                         redrawCanvas();
                                     }}
-                                    title="Deselect">Clear Sel.</button
+                                    title="Deselect hole">Clear Sel.</button
                                 >
                                 <button
                                     class="danger micro"
                                     on:click={deleteSelectedHole}
-                                    title="Delete (Del/Bksp)"
+                                    title="Delete selected hole (Del/Bksp)"
                                     >Delete Sel.</button
                                 >
                             </div>
@@ -1894,10 +2275,13 @@
                 </div>
             {:else if mode !== "loading"}
                 <div class="canvas-placeholder">
-                    <div class="instructions">Load image to start.</div>
+                    <div class="instructions">
+                        Load an image to start analysis.
+                    </div>
                 </div>
             {/if}
         </div>
+
         <div class="controls-column" bind:this={controlsColumnEl}>
             {#if imageUrl}
                 <div class="controls-section">
@@ -1909,9 +2293,11 @@
                                 type="number"
                                 id="targetDist"
                                 bind:value={targetDistance}
-                                min="5"
-                                step="5"
+                                min="0"
+                                step="any"
                                 on:input={handleTargetDistanceChange}
+                                title="Distance to target (set > 0 for MOA/MIL)"
+                                style:width="60px"
                             />
                             <select
                                 bind:value={targetDistanceUnit}
@@ -1927,9 +2313,11 @@
                                 type="number"
                                 id="bulletDiam"
                                 bind:value={bulletDiameter}
-                                min="0.1"
-                                step="0.01"
+                                min="0.01"
+                                step="0.001"
                                 on:input={handleDiameterChange}
+                                title="Bullet diameter (for hole visualization)"
+                                style:width="60px"
                             />
                             <select
                                 bind:value={bulletDiameterUnit}
@@ -1947,6 +2335,7 @@
                                 id="resultUnit"
                                 bind:value={resultDisplayUnit}
                                 on:change={handleResultUnitChange}
+                                title="Units for displaying results"
                             >
                                 <option value="inches">in</option>
                                 <option value="cm">cm</option>
@@ -1961,8 +2350,8 @@
                                 on:change={handleAngularUnitChange}
                                 disabled={targetDistance <= 0}
                                 title={targetDistance <= 0
-                                    ? "Set Tgt Dist > 0"
-                                    : ""}
+                                    ? "Set Target Distance > 0 to enable MOA/MIL"
+                                    : "Angular units for results"}
                             >
                                 <option value="moa">MOA</option>
                                 <option value="mrad">MIL</option>
@@ -2000,8 +2389,10 @@
                                 id="groupName"
                                 bind:value={activeGroup.name}
                                 on:input={redrawCanvas}
+                                title="Rename active group"
                             />
-                        </div>{/if}
+                        </div>
+                    {/if}
                 </div>
 
                 <div class="controls-section">
@@ -2013,9 +2404,9 @@
                                 type="number"
                                 id="lineWidthBase"
                                 bind:value={lineWidthBase}
-                                min="0.5"
-                                step="0.1"
-                                max="10"
+                                min="1"
+                                step="1"
+                                max="20"
                                 title="Base line width (px)"
                                 on:input={redrawCanvas}
                             />
@@ -2026,15 +2417,15 @@
                                 type="number"
                                 id="legendFontSize"
                                 bind:value={legendFontSize}
-                                min="6"
-                                step="1"
-                                max="24"
+                                min="12"
+                                step="2"
+                                max="100"
                                 title="Legend font size (px)"
                                 on:input={redrawCanvas}
                             />
                         </div>
                     </div>
-                    <div class="controls settings-row appearance-row">
+                    <div class="controls settings-row appearance-row color-row">
                         <div class="setting-item appearance-item color-item">
                             <label for="bulletHoleColor" title="Bullet holes"
                                 >Hole:</label
@@ -2083,7 +2474,7 @@
                             />
                         </div>
                     </div>
-                    <div class="controls settings-row appearance-row">
+                    <div class="controls settings-row appearance-row color-row">
                         <div class="setting-item appearance-item color-item">
                             <label
                                 for="offsetLineColor"
@@ -2141,7 +2532,7 @@
 </div>
 
 <style>
-    /* :root colors (same as before) */
+    /* --- Root Variables (Dark Theme) --- */
     :root {
         --bg-color: #242424;
         --bg-secondary-color: #333;
@@ -2165,20 +2556,22 @@
         --instruction-bg-color: #3a3f44;
         --instruction-text-color: #d1ecf1;
         --instruction-border-color: #4e555b;
-        --instruction-warning-bg-color: #4d3800;
-        --instruction-warning-text-color: #ffeeba;
-        --instruction-warning-border-color: #664d03;
-        --danger-text-color: #f8d7da;
-        --danger-bg-color: #58151c;
-        --danger-border-color: #842029;
+        --danger-text-color: #f8d7da; /* For text on danger bg */
+        --danger-bg-color-button: var(
+            --danger-color
+        ); /* Keep button background */
         --highlight-color: #ffdc00;
         --active-border-color: var(--primary-color);
         --active-bg-color: #1a4a7f;
         --active-mode-bg-color: var(--primary-color);
         --active-mode-border-color: var(--primary-hover-color);
         --canvas-border-color: #666;
+        --disabled-bg-color: #555;
+        --disabled-border-color: #555;
+        --disabled-text-color: #999;
     }
 
+    /* --- General Styles --- */
     .container {
         display: flex;
         flex-direction: column;
@@ -2188,6 +2581,7 @@
         color: var(--text-color);
         padding: 0;
         width: 100%;
+        height: calc(100vh - 2.6em); /* Ensure container takes full height */
         box-sizing: border-box;
     }
 
@@ -2201,46 +2595,48 @@
         padding-bottom: 5px;
     }
 
-    /* Main Layout */
+    /* --- Main Layout --- */
     .main-layout {
         display: flex;
-        flex-direction: column;
+        flex-direction: column; /* Mobile first */
         width: 100%;
         padding: 8px;
         gap: 10px;
         box-sizing: border-box;
-        flex-grow: 1;
-        min-height: 0;
-        /* Allow main-layout to grow/shrink */
+        flex-grow: 1; /* Allow layout to fill container */
+        min-height: 0; /* Needed for flex-grow in flex column */
     }
 
     .canvas-column {
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: 8px; /* Consistent gap */
         width: 100%;
         box-sizing: border-box;
+        min-height: 0; /* Allow shrinking */
     }
 
     .canvas-area-wrapper {
-        position: relative;
+        position: relative; /* For nudge overlay */
         width: 100%;
-        /* Needed for absolute positioning of overlay */
+        flex-grow: 1; /* Allow wrapper to take available space */
+        display: flex; /* Center canvas */
+        justify-content: center;
+        align-items: center;
+        overflow: hidden; /* Clip canvas if needed (though aspect ratio should handle) */
+        min-height: 200px; /* Minimum height */
     }
 
     .canvas-area {
         width: 100%;
-        margin: 0 auto;
-        overflow: hidden;
-        /* Crucial: clips canvas drawing */
+        height: 100%; /* Fill wrapper */
+        overflow: hidden; /* Clip canvas drawing */
         border: 1px solid var(--canvas-border-color);
-        position: relative;
-        background-color: var(--bg-color);
-        /* Match page bg */
+        background-color: var(--bg-color); /* Match page bg */
         display: flex;
-        /* Center canvas if smaller */
         justify-content: center;
         align-items: center;
+        box-sizing: border-box;
     }
 
     .canvas-placeholder {
@@ -2254,18 +2650,21 @@
         border-radius: 6px;
         padding: 20px;
         box-sizing: border-box;
+        flex-grow: 1; /* Take space when image not loaded */
     }
 
     canvas {
         display: block;
-        touch-action: manipulation;
-        /* Allow pinch zoom maybe? or none? */
+        touch-action: none; /* <<< Prevent default touch actions (pull-to-refresh, etc.) >>> */
         background-color: transparent;
-        image-rendering: pixelated;
-        /* width/height/aspect-ratio set via style attribute */
+        image-rendering: pixelated; /* Keep pixels sharp on zoom */
+        /* width/height/aspect-ratio/max-width/max-height set via style attribute */
+        object-fit: contain; /* Ensure canvas scales correctly within its container */
+        max-width: 100%;
+        max-height: 100%;
     }
 
-    /* Controls */
+    /* --- Controls --- */
     .controls-column {
         display: flex;
         flex-direction: column;
@@ -2289,10 +2688,11 @@
         flex-wrap: wrap;
         gap: 6px 10px;
         align-items: center;
-        justify-content: center;
+        justify-content: center; /* Center items by default on mobile */
     }
 
     .controls > span {
+        /* For labels like "Groups:" */
         color: var(--text-secondary-color);
         margin-right: 4px;
         font-weight: 500;
@@ -2300,13 +2700,12 @@
     }
 
     .settings-row {
-        justify-content: space-around;
+        justify-content: space-around; /* Space out items in the row */
         width: 100%;
         border-bottom: 1px dashed var(--border-color);
         padding-bottom: 8px;
         margin-bottom: 8px;
     }
-
     .settings-row:last-child {
         border-bottom: none;
         padding-bottom: 0;
@@ -2317,7 +2716,7 @@
         display: flex;
         align-items: center;
         gap: 4px;
-        flex-basis: 48%;
+        flex-basis: 48%; /* Try to fit two items per row on larger mobile */
         flex-grow: 1;
         justify-content: center;
     }
@@ -2327,19 +2726,17 @@
         padding-top: 8px;
         margin-top: 8px;
     }
-
     .group-management button {
         margin-right: 4px;
     }
-
     .group-management button.active {
+        /* Active group button */
         border-color: var(--active-border-color);
         background-color: var(--active-bg-color);
         color: var(--text-color);
         font-weight: bold;
     }
 
-    /* Mode selection moved */
     label {
         margin-right: 3px;
         font-weight: 500;
@@ -2359,31 +2756,34 @@
         font-size: 0.85em;
         box-sizing: border-box;
     }
+    input:disabled,
+    select:disabled {
+        background-color: var(--disabled-bg-color);
+        border-color: var(--disabled-border-color);
+        color: var(--disabled-text-color);
+        cursor: not-allowed;
+        opacity: 0.7;
+    }
 
     select {
-        appearance: none;
-        background-repeat: no-repeat;
-        background-position: right 0.5em top 50%;
-        background-size: 0.8em auto;
-        padding-right: 1.8em;
-        /* Increased padding for arrow */
+        appearance: none; /* Custom arrow needed for consistent look */
+        /* Add background SVG for arrow later if desired */
+        min-width: 50px;
+        text-align: center;
+        text-align-last: center; /* Center text */
     }
 
     input[type="number"] {
-        width: 65px;
-    }
-
-    select {
-        min-width: 50px;
-        text-align: center;
-        text-align-last: center;
+        width: 65px; /* Default width, adjust as needed */
     }
 
     input[type="text"] {
+        /* Group name */
         flex-grow: 1;
         min-width: 70px;
     }
 
+    /* --- Buttons --- */
     button {
         padding: 6px 10px;
         cursor: pointer;
@@ -2400,49 +2800,42 @@
         align-items: center;
         justify-content: center;
     }
-
     button:hover:not(:disabled) {
         background-color: var(--primary-hover-color);
         border-color: var(--primary-hover-color);
     }
-
     button:disabled {
-        background-color: #555;
-        border-color: #555;
-        color: #999;
+        background-color: var(--disabled-bg-color);
+        border-color: var(--disabled-border-color);
+        color: var(--disabled-text-color);
         cursor: not-allowed;
         opacity: 0.7;
     }
-
     button.secondary {
         background-color: var(--secondary-color);
         border-color: var(--secondary-color);
         color: var(--text-color);
     }
-
     button.secondary:hover:not(:disabled) {
         background-color: var(--secondary-hover-color);
         border-color: var(--secondary-hover-color);
     }
-
     button.danger {
         background-color: var(--danger-color);
         border-color: var(--danger-color);
         color: #fff;
     }
-
     button.danger:hover:not(:disabled) {
         background-color: var(--danger-hover-color);
         border-color: var(--danger-hover-color);
     }
-
     button.micro {
+        /* For small buttons like group delete */
         padding: 2px 5px;
         font-size: 0.75em;
         line-height: 1.2;
-        margin-left: -4px;
+        margin-left: -4px; /* Pull closer to associated button */
     }
-
     button.nudge {
         background-color: var(--warning-color);
         border-color: var(--warning-color);
@@ -2452,76 +2845,87 @@
         padding: 2px 6px;
         min-width: 30px;
     }
-
     button.nudge:hover:not(:disabled) {
         background-color: var(--warning-hover-color);
         border-color: var(--warning-hover-color);
     }
 
-    /* Interaction Controls Bar */
+    /* --- Interaction Controls Bar --- */
     .interaction-controls {
         display: flex;
-        flex-direction: column;
-        gap: 5px;
+        flex-direction: column; /* Stack sections vertically */
+        gap: 8px;
         background-color: var(--bg-secondary-color);
-        padding: 4px 8px;
+        padding: 6px 8px;
         border-radius: 4px;
         border: 1px solid var(--border-color);
     }
-
     .zoom-pan-save {
         display: flex;
         gap: 5px;
         align-items: center;
         flex-wrap: wrap;
-        justify-content: flex-start;
+        justify-content: flex-start; /* Align left on mobile */
     }
-
+    .scale-mode-controls {
+        display: flex;
+        gap: 5px 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        border-top: 1px dashed var(--border-color);
+        padding-top: 8px;
+        margin-top: 5px;
+    }
     .mode-buttons {
         display: flex;
         gap: 5px;
         align-items: center;
         flex-wrap: wrap;
-        justify-content: flex-start;
-        border-top: 1px dashed var(--border-color);
-        padding-top: 5px;
-        margin-top: 3px;
+        justify-content: flex-start; /* Align with scale controls */
+        margin-left: 10px; /* Add space between scale and mode */
     }
-
-    .interaction-controls button {
+    .interaction-controls button,
+    .scale-mode-controls button,
+    .mode-buttons button {
         padding: 4px 8px;
         font-size: 0.9em;
         min-width: 35px;
-        background-color: var(--secondary-color);
+        background-color: var(--secondary-color); /* Default to secondary */
         border-color: var(--secondary-color);
+        color: var(--text-color);
     }
-
-    .interaction-controls button:hover:not(:disabled) {
+    .interaction-controls button:hover:not(:disabled),
+    .scale-mode-controls button:hover:not(:disabled),
+    .mode-buttons button:hover:not(:disabled) {
         background-color: var(--secondary-hover-color);
         border-color: var(--secondary-hover-color);
     }
 
-    .interaction-controls button.active {
+    /* Active mode/state buttons */
+    .scale-mode-controls button.active, /* Active scaling button */
+     .mode-buttons button.active {
+        /* Active mode button */
         background-color: var(--active-mode-bg-color);
         border-color: var(--active-mode-border-color);
         color: white;
+        font-weight: bold;
     }
 
-    .interaction-controls span.zoom-level {
+    .zoom-pan-save .zoom-level {
         font-size: 0.8em;
         color: var(--text-secondary-color);
         margin: 0 5px;
         white-space: nowrap;
     }
-
-    .interaction-controls .save-button {
+    .zoom-pan-save .save-button {
+        /* Specific style for Save */
         background-color: var(--primary-color);
         border-color: var(--primary-color);
         color: white;
-        margin-left: auto;
+        margin-left: auto; /* Push save button to the right */
     }
-
-    .interaction-controls .save-button:hover:not(:disabled) {
+    .zoom-pan-save .save-button:hover:not(:disabled) {
         background-color: var(--primary-hover-color);
         border-color: var(--primary-hover-color);
     }
@@ -2540,14 +2944,13 @@
         line-height: 1.4;
     }
 
-    /* Nudge Overlay */
+    /* --- Nudge Overlay --- */
     .nudge-overlay {
         position: absolute;
         top: 10px;
         left: 10px;
         z-index: 10;
         background-color: rgba(51, 51, 51, 0.85);
-        /* Slightly transparent background */
         border: 1px solid var(--border-color);
         border-radius: 5px;
         padding: 8px;
@@ -2557,8 +2960,8 @@
         align-items: center;
         gap: 5px;
     }
-
     .nudge-overlay > span {
+        /* "Nudge (Arrows):" text */
         display: block;
         text-align: center;
         width: 100%;
@@ -2566,33 +2969,30 @@
         font-size: 0.9em;
         color: var(--text-secondary-color);
     }
-
     .nudge-grid {
         display: grid;
-        grid-template-columns: repeat(3, auto);
+        grid-template-columns: repeat(3, auto); /* 3 columns for arrows */
         gap: 4px;
         justify-content: center;
         margin-bottom: 5px;
     }
-
+    /* Arrow key grid layout */
     .nudge-grid button:nth-child(1) {
         grid-column: 2;
-    }
-
+        grid-row: 1;
+    } /* Up */
     .nudge-grid button:nth-child(2) {
         grid-column: 1;
         grid-row: 2;
-    }
-
+    } /* Left */
     .nudge-grid button:nth-child(3) {
         grid-column: 3;
         grid-row: 2;
-    }
-
+    } /* Right */
     .nudge-grid button:nth-child(4) {
         grid-column: 2;
         grid-row: 3;
-    }
+    } /* Down */
 
     .nudge-actions {
         display: flex;
@@ -2600,43 +3000,30 @@
         gap: 10px;
         width: 100%;
     }
-
     .nudge-actions button.micro {
         margin-left: 0;
-    }
+    } /* Reset micro button margin */
 
-    /* Remove neg margin */
-
-    /* Appearance Controls Styling */
+    /* --- Appearance Controls Styling --- */
     .appearance-row {
-        gap: 5px 15px;
-        /* Adjust gap */
+        gap: 5px 15px; /* Adjust gap */
     }
-
     .appearance-item {
         flex-grow: 1;
         gap: 5px;
     }
-
     .appearance-item.color-item {
-        flex-basis: auto;
-        /* Let color pickers size naturally */
+        flex-basis: auto; /* Let color pickers size naturally */
         flex-grow: 0;
     }
-
     .appearance-item label {
-        min-width: 60px;
-        /* Align labels a bit */
+        min-width: 60px; /* Align labels a bit */
         text-align: right;
-        font-size: 0.8em;
-        /* Smaller labels */
+        font-size: 0.8em; /* Smaller labels */
     }
-
     .appearance-item input[type="number"] {
-        width: 55px;
-        /* Smaller number inputs */
+        width: 55px; /* Smaller number inputs */
     }
-
     .appearance-item input[type="color"] {
         width: 35px;
         height: 25px;
@@ -2646,195 +3033,166 @@
         background-color: var(--input-bg-color);
         cursor: pointer;
     }
+    .color-row {
+        justify-content: space-between;
+    } /* Space out colors */
 
-    /* Desktop Layout */
+    /* --- Desktop Layout --- */
     @media (min-width: 992px) {
         .main-layout {
-            display: flex;
-            flex-direction: row;
+            flex-direction: row; /* Side-by-side */
             align-items: flex-start;
             padding: 15px;
             gap: 15px;
+            height: calc(100vh - 30px); /* Limit height */
+            overflow: hidden; /* Prevent outer scroll */
         }
 
         .canvas-column {
-            flex: 3;
-            order: 1;
-            overflow: hidden;
-            min-height: 0;
-            display: grid;
-            grid-template-rows: auto 1fr;
+            flex: 3; /* Take more space */
+            order: 1; /* Canvas on left */
+            height: 100%; /* Fill parent height */
+            display: flex; /* Use flex again for vertical layout */
+            flex-direction: column;
+            gap: 10px; /* Adjust gap */
         }
 
-        /* Adjusted max-height */
         .canvas-area-wrapper {
-            position: relative;
-            display: flex;
-            /* Let canvas-area center */
-            align-items: center;
-            justify-content: center;
-            min-height: 0;
-            /* max-height: calc(100vh - 150px); */
-            /* Example height constraint */
-            overflow: hidden;
+            flex-grow: 1; /* Allow wrapper to fill canvas column */
+            min-height: 0; /* Override min-height */
         }
-
-        /* Allow wrapper to grow */
         .canvas-area {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-            border: 1px solid var(--canvas-border-color);
-        }
-
-        /* Let canvas-area size naturally within wrapper */
-        canvas {
-            /* Styles set dynamically, max-width/height handled by container */
+            /* max-width/max-height handled by wrapper */
         }
 
         .controls-column {
-            flex: 1;
-            max-width: 380px;
-            width: auto;
-            order: 2;
-            overflow-y: auto;
-            /* Allow scrolling if controls exceed height */
-            padding-right: 5px;
-            min-height: 0;
-            /* Allow flex to shrink */
-            max-height: calc(100vh - 30px);
-            /* Example height constraint */
+            flex: 1; /* Take less space */
+            max-width: 380px; /* Limit width */
+            order: 2; /* Controls on right */
+            overflow-y: auto; /* Allow controls to scroll */
+            height: 100%; /* Fill parent height */
+            padding-right: 5px; /* Add padding for scrollbar */
+            min-height: 0; /* Allow shrinking */
         }
 
         .settings-row {
-            flex-direction: row;
+            flex-direction: row; /* Items side-by-side */
             align-items: center;
-            flex-wrap: wrap;
+            flex-wrap: wrap; /* Allow wrapping if needed */
         }
-
         .setting-item {
-            flex-basis: auto;
-            justify-content: flex-start;
-            width: auto;
+            flex-basis: auto; /* Reset basis */
+            justify-content: flex-start; /* Align left */
+            width: auto; /* Natural width */
         }
 
         .controls {
             justify-content: flex-start;
-        }
-
+        } /* Align controls left */
         .group-management {
             justify-content: flex-start;
         }
 
         .interaction-controls {
-            flex-direction: row;
+            flex-direction: row; /* Side-by-side */
             align-items: center;
+            flex-wrap: wrap; /* Allow wrap */
         }
-
-        /* Side-by-side on desktop */
-        .mode-buttons {
-            border-top: none;
+        .scale-mode-controls {
+            border-top: none; /* Remove border */
             padding-top: 0;
             margin-top: 0;
-            margin-left: 15px;
+            flex-grow: 1; /* Allow this section to take space */
+        }
+        .mode-buttons {
+            margin-left: auto; /* Push mode buttons to right */
         }
 
         .zoom-pan-save .save-button {
-            margin-left: auto;
-        }
+            margin-left: 15px;
+        } /* Add some space before save */
+        .appearance-item label {
+            min-width: 70px;
+        } /* Slightly wider labels on desktop */
     }
 
-    /* Tablet/Mobile */
+    /* --- Tablet/Mobile Tweaks --- */
     @media (max-width: 991px) {
-        .canvas-area {
-            max-height: 70vh;
+        .canvas-area-wrapper {
+            max-height: 70vh; /* Limit canvas height on mobile */
         }
-
-        /* Limit canvas height on mobile too */
         .setting-item {
-            flex-basis: 100%;
-            justify-content: space-between;
+            flex-basis: 100%; /* Full width per item */
+            justify-content: space-between; /* Space label and input */
         }
-
         .setting-item label {
-            flex-grow: 0;
             text-align: left;
-            margin-bottom: 2px;
         }
-
         .setting-item input,
         .setting-item select {
-            flex-grow: 1;
+            flex-grow: 0;
             width: auto;
-        }
-
+        } /* Don't grow inputs */
         input[type="number"] {
             width: 80px;
-        }
-
+        } /* Slightly wider inputs */
         .mode-buttons {
             justify-content: center;
-        }
-
+            margin-left: 0;
+        } /* Center mode buttons */
         .mode-buttons button {
-            flex-basis: calc(25% - 5px);
-        }
-
-        /* Try 4 buttons per row */
+            flex-basis: calc(33% - 4px);
+        } /* Try 3 buttons per row */
         .group-management {
             justify-content: center;
         }
-
-        .group-management button {
-            width: auto;
-        }
-
         .zoom-pan-save .save-button {
             margin-left: 5px;
+        } /* Reset margin */
+        .scale-mode-controls {
+            justify-content: center;
+        }
+        .color-row {
+            justify-content: center;
         }
     }
 
+    /* --- Smaller Mobile Tweaks --- */
     @media (max-width: 480px) {
         h2 {
             font-size: 1em;
         }
-
         .setting-item {
             flex-direction: column;
             align-items: stretch;
-        }
-
+        } /* Stack label and input */
         .setting-item label {
             margin-bottom: 3px;
         }
-
         .appearance-item label {
             min-width: unset;
             text-align: left;
         }
-
         .mode-buttons button {
             flex-basis: calc(50% - 4px);
-        }
-
-        /* Two per row */
+        } /* Two per row */
         .controls-section {
             padding: 8px;
         }
-
         .interaction-controls {
-            padding: 3px;
+            padding: 5px;
         }
-
         .zoom-pan-save,
+        .scale-mode-controls,
         .mode-buttons {
-            gap: 3px;
+            gap: 4px;
         }
-
         button {
             padding: 5px 8px;
             font-size: 0.8em;
         }
+        .color-row .setting-item {
+            flex-basis: 45%;
+        } /* Fit two colors per row */
     }
 </style>
