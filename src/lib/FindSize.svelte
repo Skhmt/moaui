@@ -40,34 +40,28 @@
 	});
 </script>
 
-<div class="container">
-	<div>
-		<strong>Distance:</strong>
-	</div>
-	<div>
+<section class="grid grid-cols-[5em_1fr]">
+	<strong>Distance:</strong>
+	<label class="input">
 		<input type="number" bind:value={distanceValue} />
 		<select bind:value={distanceUnit}>
 			<option>Meters</option>
 			<option>Yards</option>
 			<option>Feet</option>
 		</select>
-	</div>
+	</label>
 
-	<div>
-		<strong>Angle:</strong>
-	</div>
-	<div>
+	<strong>Angle:</strong>
+	<label class="input">
 		<input type="number" bind:value={angleValue} />
 		<select bind:value={angleUnit}>
 			<option>Mils (mrad)</option>
 			<option>MOA (arcmin)</option>
 		</select>
-	</div>
+	</label>
 
-	<div>
-		<strong>Size:</strong>
-	</div>
-	<div>
+	<strong>Size:</strong>
+	<label class="input">
 		<input type="number" bind:value={sizeValue} disabled />
 		<select bind:value={sizeUnit}>
 			<option>Meters</option>
@@ -76,17 +70,11 @@
 			<option>Feet</option>
 			<option>Inches</option>
 		</select>
-	</div>
-</div>
+	</label>
+</section>
 
 <style>
-	.container {
-		display: grid;
-		grid-template-columns: 5em 1fr;
-	}
-
-	input {
-		width: 12em;
-		height: 1.1em;
+	option {
+		text-align-last: right;
 	}
 </style>

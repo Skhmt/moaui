@@ -5,61 +5,44 @@
 	import FindSize from "./lib/FindSize.svelte";
 	import Measurements from "./lib/Measurements.svelte";
 	import GetCoords from "./lib/GetCoords.svelte";
-	//@ts-ignore
 	import Group from "./lib/Group.svelte";
-
-	let tab = $state(0);
 </script>
 
-<main>
-	<div>
-		<button onclick={() => (tab = 0)} disabled={tab == 0}> Convert </button>
-		<button onclick={() => (tab = 1)} disabled={tab == 1}>
-			Calculate
-		</button>
-		<button onclick={() => (tab = 2)} disabled={tab == 2}> Groups </button>
+<div>
+	<div role="tablist" class="tabs tabs-border prose pl-4">
+		<input
+			type="radio"
+			name="tabs"
+			class="tab"
+			aria-label="Convert"
+			checked
+		/>
+		<div class="tab-content" role="tab">
+			<h3>MOA to Mils <code>(arcmin to mrad)</code></h3>
+			<MoaToMil />
+
+			<h3>Mils to MOA <code>(mrad to arcmin)</code></h3>
+			<MilToMoa />
+
+			<h3>Measurements</h3>
+			<Measurements />
+		</div>
+
+		<input type="radio" name="tabs" class="tab" aria-label="Calculate" />
+		<div class="tab-content" role="tab">
+			<h3>Find distance</h3>
+			<FindDistance />
+
+			<h3>Find coordinates</h3>
+			<GetCoords />
+
+			<h3>Find size</h3>
+			<FindSize />
+		</div>
+
+		<input type="radio" name="tabs" class="tab" aria-label="Group" />
+		<div class="tab-content" role="tab">
+			<Group />
+		</div>
 	</div>
-
-	<!-- Convert tab -->
-	<div style={tab == 0 ? "display: block" : "display: none"}>
-		<h2>MOA to Mils <code>(arcmin to mrad)</code></h2>
-		<MoaToMil />
-
-		<h2>Mils to MOA <code>(mrad to arcmin)</code></h2>
-		<MilToMoa />
-
-		<h2>Measurements</h2>
-		<Measurements />
-	</div>
-
-	<!-- Calculate tab -->
-	<div style={tab == 1 ? "display: block" : "display: none"}>
-		<h2>Find distance</h2>
-		<FindDistance />
-
-		<h2>Find coordinates</h2>
-		<GetCoords />
-
-		<h2>Find size</h2>
-		<FindSize />
-	</div>
-
-	<!-- Group tab -->
-	<div style={tab == 2 ? "display: block" : "display: none"}>
-		<Group />
-	</div>
-</main>
-
-<style>
-	button {
-		width: 8em;
-		height: 1.5em;
-		font-size: 1em;
-	}
-	button:disabled {
-		font-weight: bold;
-		color: white;
-		background-color: rgba(0, 0, 0, 0);
-		border: none;
-	}
-</style>
+</div>

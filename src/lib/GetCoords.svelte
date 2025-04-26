@@ -92,28 +92,18 @@
 	}
 </script>
 
-<div class="container">
+<section class="grid grid-cols-[5em_1fr]">
+	<strong>Coords:</strong>
 	<div>
-		<strong>Coords:</strong>
-	</div>
-	<div>
-		<input
-			type="text"
-			style="width: 16em; height: 1.1em"
-			bind:value={coordsValue}
-		/>
+		<label class="input">
+			<input type="text" bind:value={coordsValue} />
+		</label>
 		<button onclick={() => getDeviceCoords()}>📍</button>
 	</div>
 
-	<div>
-		<strong>Distance:</strong>
-	</div>
-	<div>
-		<input
-			type="number"
-			style="width: 12em; height: 1.1em"
-			bind:value={distanceValue}
-		/>
+	<strong>Distance:</strong>
+	<label class="input">
+		<input type="number" bind:value={distanceValue} />
 		<select bind:value={distanceUnit}>
 			<option>Meters</option>
 			<option>Yards</option>
@@ -121,43 +111,31 @@
 			<option>Miles</option>
 			<option>Kilometers</option>
 		</select>
-	</div>
+	</label>
 
+	<strong>Bearing:</strong>
 	<div>
-		<strong>Bearing:</strong>
-	</div>
-	<div>
-		<input
-			type="number"
-			style="width: 12em; height: 1.1em"
-			bind:value={bearingValue}
-		/>
-		<strong>°</strong>
+		<label class="input">
+			<input type="number" bind:value={bearingValue} />
+			<strong>°</strong>
+		</label>
 		<button onclick={() => getDeviceBearing()}>🧭</button>
 	</div>
 
-	<div>
-		<strong>Target:</strong>
-	</div>
-	<div>
-		<input
-			type="text"
-			style="width: 16em; height: 1.1em"
-			disabled
-			bind:value={targetValue}
-		/>
+	<strong>Target:</strong>
+	<label class="input">
+		<input type="text" disabled bind:value={targetValue} />
 		<select bind:value={targetType}>
 			<option value="mgrs">MGRS</option>
 			<option value="d">D</option>
 			<option value="dm">DM</option>
 			<option value="dms">DMS</option>
 		</select>
-	</div>
-</div>
+	</label>
+</section>
 
 <style>
-	.container {
-		display: grid;
-		grid-template-columns: 5em 1fr;
+	option {
+		text-align-last: right;
 	}
 </style>

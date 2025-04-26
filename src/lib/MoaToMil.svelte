@@ -10,38 +10,36 @@
 	}
 </script>
 
-<div class="container">
-	<div>
-		<strong>MOA:</strong>
-	</div>
-	<div>
+<section class="grid grid-cols-[4em_1fr]">
+	<strong>MOA:</strong>
+	<label class="input">
 		<input
 			type="number"
 			bind:value={userMoa}
-			style="width: 6em; height: 1.1em"
+			min="0"
 		/>
 		<button onclick={() => modMoa(1)}>+1</button>
 		<button onclick={() => modMoa(0.5)}>+0.5</button>
 		<button onclick={() => modMoa(-0.5)}>-0.5</button>
 		<button onclick={() => modMoa(-1)}>-1</button>
-	</div>
+	</label>
 
-	<div>
-		<strong>Mils:</strong>
-	</div>
-	<div>
+	<strong>Mil:</strong>
+	<label class="input">
+		
 		<input
 			type="text"
 			bind:value={userMoaToMrad}
-			style="width: 18em; height: 1.1em"
 			disabled
 		/>
-	</div>
-</div>
+	</label>
+</section>
 
 <style>
-	.container {
-		display: grid;
-		grid-template-columns: 4em 1fr;
+	button {
+		height: 100%;
+		padding: 2px;
+		margin: 0;
 	}
 </style>
+

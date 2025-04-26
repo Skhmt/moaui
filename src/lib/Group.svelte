@@ -1,20 +1,16 @@
 <script lang="ts">
     import { onMount, onDestroy, tick } from "svelte";
+    import * as moa from "@moa/moa"; // Assuming moa.txt is renamed/served as moa.mjs
 
-    // --- Constants ---
-    const IN_TO_MM = 25.4;
-    const YARDS_TO_MM = 914.4;
-    const METERS_TO_MM = 1000;
-    const RAD_TO_MOA = (180 / Math.PI) * 60;
-    const RAD_TO_MRAD = 1000;
+    // --- Kept Constants ---
     const NUDGE_AMOUNT_DISPLAY_PIXELS = 2;
     const ZOOM_FACTOR = 1.2;
-    const MIN_ZOOM = 0.01; // Ensure min zoom is 100%
+    const MIN_ZOOM = 0.01;
     const MAX_ZOOM = 20.0;
     const MIN_SCALE_LINE_PIXELS = 5;
-    const MAX_BUFFER_DIM = 4096; // Cap canvas buffer size for performance
+    const MAX_BUFFER_DIM = 4096;
 
-    // --- Type Definitions ---
+    // --- Type Definitions  ---
     interface Point {
         x: number;
         y: number;
@@ -22,7 +18,7 @@
     interface RealPoint {
         x: number;
         y: number;
-    }
+    } // Stores values in referenceUnit
     interface Rect {
         x: number;
         y: number;
@@ -35,27 +31,25 @@
         sWidth: number;
         sHeight: number;
     }
-
     interface ShotGroup {
         id: number;
         name: string;
         bulletHolesPixels: Point[];
-        bulletHolesReal: RealPoint[];
-        centroidReal: RealPoint | null;
-        meanRadius: number | null;
+        bulletHolesReal: RealPoint[]; // Stores values in referenceUnit
+        centroidReal: RealPoint | null; // Stores value in referenceUnit
+        meanRadius: number | null; // Stores value in referenceUnit
         meanRadiusMOA: number | null;
         meanRadiusMRAD: number | null;
-        maxSpread: number | null;
+        maxSpread: number | null; // Stores value in referenceUnit
         maxSpreadMOA: number | null;
         maxSpreadMRAD: number | null;
         aimingPointPixels: Point | null;
-        aimingPointReal: RealPoint | null;
-        offsetFromAim: { distance: number; angleDegrees: number } | null;
+        aimingPointReal: RealPoint | null; // Stores value in referenceUnit
+        offsetFromAim: { distance: number; angleDegrees: number } | null; // distance is in referenceUnit
         resultsValid: boolean;
         infoBoxAnchorImage: Point | null;
         infoBoxSize: { width: number; height: number } | null;
     }
-
     type Mode =
         | "loading"
         | "scaling"
@@ -63,21 +57,20 @@
         | "placingAim"
         | "selectingHole"
         | "panning";
-    type LinearUnit = "inches" | "cm" | "mm";
+    type LinearUnit = "inches" | "cm" | "mm" | "meters" | "yards"; // Keep broader type for flexibility
     type DistanceUnit = "yards" | "meters";
     type DiameterUnit = "inches" | "mm";
     type AngularUnitDisplay = "moa" | "mrad" | "none";
 
-    // --- State Variables ---
+    // --- State Variables  ---
     let imageFile: File | null = null;
     let imageUrl: string | null = null;
     let canvasElement: HTMLCanvasElement | undefined;
     let canvasAreaElement: HTMLDivElement | undefined;
     let ctx: CanvasRenderingContext2D | null = null;
-    // let imageElement: HTMLImageElement | null = null; // Replaced by imageBitmap
-    let imageBitmap: ImageBitmap | null = null; // <<< Added for performance
+    let imageBitmap: ImageBitmap | null = null;
     let mode: Mode = "loading";
-    let scale: number | null = null;
+    let scale: number | null = null; // pixels per referenceUnit
     let referenceUnit: LinearUnit = "inches";
     let referenceLength: number = 1.0;
     let resultDisplayUnit: LinearUnit = "inches";
@@ -107,16 +100,17 @@
     let fileInputEl: HTMLInputElement | undefined;
     let controlsColumnEl: HTMLDivElement | undefined;
     let dpr = 1;
+    let fitScaleValue: number = 1.0;
+    let letterboxParams = { dx: 0, dy: 0, dWidth: 0, dHeight: 0 };
 
-    // --- Style State Variables (Added) ---
+    // --- Style State Variables  ---
     let legendFontSize: number = 12;
     let legendTextColor: string = "#e0e0e0";
     let legendBgColor: string = "#000000";
     let legendBorderColor: string = "#555555";
-    // Currently unused in drawInfoBox, but available
     let lineWidthBase: number = 2;
     let bulletHoleColor: string = "#FF4136";
-    let inactiveBulletHoleColor: string = "rgba(255,65,54,0.7)"; // Derived or separate setting? Let's keep it derived for now.
+    let inactiveBulletHoleColor: string = "rgba(255,65,54,0.7)";
     let selectedHoleColor: string = "#FFDC00";
     let selectedHoleLineWidthMultiplier: number = 2;
     let centroidColor: string = "#0074D9";
@@ -124,145 +118,129 @@
     let offsetLineColor: string = "#00BFFF";
     let offsetLineWidthMultiplier: number = 0.8;
     let scaleLineColor: string = "#00FF00";
-    // Default 'lime'
     let scaleLineWidth: number = 2;
     let scaleMarkerSize: number = 6;
 
-    // --- Lifecycle & Setup ---
+    // --- Lifecycle & Setup  ---
     let observer: ResizeObserver | null = null;
-
     onMount(() => {
         dpr = window.devicePixelRatio || 1;
         if (canvasAreaElement) {
             observer = new ResizeObserver(handleResize);
             observer.observe(canvasAreaElement);
         }
-
         window.addEventListener("pointermove", handleWindowPointerMove);
         window.addEventListener("pointerup", handleWindowPointerUp);
         window.addEventListener("keydown", handleKeyDown);
     });
-
     onDestroy(() => {
-        if (canvasAreaElement && observer) {
+        if (canvasAreaElement && observer)
             observer.unobserve(canvasAreaElement);
-        }
         if (imageUrl && imageUrl.startsWith("blob:"))
             URL.revokeObjectURL(imageUrl);
         window.removeEventListener("pointermove", handleWindowPointerMove);
         window.removeEventListener("pointerup", handleWindowPointerUp);
         window.removeEventListener("keydown", handleKeyDown);
-
-        // <<< Close the bitmap when component is destroyed >>>
-        if (imageBitmap) {
-            imageBitmap.close();
-            imageBitmap = null;
-        }
+        if (imageBitmap) imageBitmap.close();
+        imageBitmap = null;
     });
-
+    // --- handleResize  ---
     function handleResize() {
-        if (!canvasElement || !ctx || !imageBitmap) return; // Check imageBitmap
-
-        const displayWidth = canvasElement.clientWidth;
-        const displayHeight = canvasElement.clientHeight;
-
-        if (displayWidth <= 0 || displayHeight <= 0) {
-            return;
-        }
-
-        // Recalculate buffer size based on current bitmap and display size/DPR, applying cap
-        const logicalWidth = imageBitmap.width;
-        const logicalHeight = imageBitmap.height;
-
-        let bufferWidth = logicalWidth * dpr;
-        let bufferHeight = logicalHeight * dpr;
-
-        if (bufferWidth > MAX_BUFFER_DIM || bufferHeight > MAX_BUFFER_DIM) {
-            const ratio = Math.min(
-                MAX_BUFFER_DIM / bufferWidth,
-                MAX_BUFFER_DIM / bufferHeight,
-            );
-            bufferWidth = Math.round(bufferWidth * ratio);
-            bufferHeight = Math.round(bufferHeight * ratio);
-        }
-
-        // Only resize if needed
+        if (!canvasElement || !canvasAreaElement) return;
+        const displayWidth = canvasAreaElement.clientWidth;
+        const displayHeight = canvasAreaElement.clientHeight;
+        if (displayWidth <= 0 || displayHeight <= 0) return;
+        let targetBufferWidth = displayWidth * dpr;
+        let targetBufferHeight = displayHeight * dpr;
         if (
-            canvasElement.width !== bufferWidth ||
-            canvasElement.height !== bufferHeight
+            targetBufferWidth > MAX_BUFFER_DIM ||
+            targetBufferHeight > MAX_BUFFER_DIM
         ) {
-            canvasElement.width = bufferWidth;
-            canvasElement.height = bufferHeight;
-            console.log(
-                `Resized canvas buffer to ${bufferWidth}x${bufferHeight} (Display: ${displayWidth}x${displayHeight}, DPR: ${dpr})`,
-            );
+            const ratioW = MAX_BUFFER_DIM / targetBufferWidth;
+            const ratioH = MAX_BUFFER_DIM / targetBufferHeight;
+            const ratio = Math.min(ratioW, ratioH);
+            targetBufferWidth = Math.round(targetBufferWidth * ratio);
+            if (ratioW < ratioH)
+                targetBufferHeight = Math.round(
+                    targetBufferWidth / (displayWidth / displayHeight),
+                );
+            else
+                targetBufferWidth = Math.round(
+                    targetBufferHeight * (displayWidth / displayHeight),
+                );
         }
-
-        redrawCanvas(); // Redraw with new buffer size
+        targetBufferWidth = Math.max(1, targetBufferWidth);
+        targetBufferHeight = Math.max(1, targetBufferHeight);
+        if (
+            canvasElement.width !== targetBufferWidth ||
+            canvasElement.height !== targetBufferHeight
+        ) {
+            canvasElement.width = targetBufferWidth;
+            canvasElement.height = targetBufferHeight;
+            if (imageBitmap) {
+                resetZoomToFit();
+                redrawCanvas();
+            }
+        }
     }
-
+    // --- setupCanvas  ---
     function setupCanvas(): void {
-        if (!canvasElement || !imageUrl || !imageFile /* Need the file */)
-            return;
+        if (!canvasElement || !imageUrl || !imageFile) return;
         const context = canvasElement.getContext("2d", { alpha: false });
         if (!context) {
-            console.error("No 2D context");
             alert("Canvas init error.");
             reset();
             return;
         }
         ctx = context;
-
-        // <<< Use createImageBitmap >>>
         self.createImageBitmap(imageFile)
             .then((bitmap) => {
-                // Close previous bitmap if it exists
-                if (imageBitmap) {
-                    imageBitmap.close();
-                }
-                imageBitmap = bitmap; // Store the new bitmap
-
-                if (!canvasElement || !ctx || !imageBitmap) return;
-
+                if (imageBitmap) imageBitmap.close();
+                imageBitmap = bitmap;
+                if (
+                    !canvasElement ||
+                    !ctx ||
+                    !imageBitmap ||
+                    !canvasAreaElement
+                )
+                    return;
                 const logicalWidth = imageBitmap.width;
                 const logicalHeight = imageBitmap.height;
-
-                // <<< Limit canvas buffer size >>>
-                let bufferWidth = logicalWidth * dpr;
-                let bufferHeight = logicalHeight * dpr;
-
+                const displayWidth = canvasAreaElement.clientWidth;
+                const displayHeight = canvasAreaElement.clientHeight;
+                if (displayWidth <= 0 || displayHeight <= 0) return;
+                let bufferWidth = displayWidth * dpr;
+                let bufferHeight = displayHeight * dpr;
                 if (
                     bufferWidth > MAX_BUFFER_DIM ||
                     bufferHeight > MAX_BUFFER_DIM
                 ) {
-                    const ratio = Math.min(
-                        MAX_BUFFER_DIM / bufferWidth,
-                        MAX_BUFFER_DIM / bufferHeight,
-                    );
+                    const ratioW = MAX_BUFFER_DIM / bufferWidth;
+                    const ratioH = MAX_BUFFER_DIM / bufferHeight;
+                    const ratio = Math.min(ratioW, ratioH);
                     bufferWidth = Math.round(bufferWidth * ratio);
-                    bufferHeight = Math.round(bufferHeight * ratio);
-                    console.warn(
-                        `Large image detected. Capping canvas buffer to ${bufferWidth}x${bufferHeight}`,
-                    );
+                    if (ratioW < ratioH)
+                        bufferHeight = Math.round(
+                            bufferWidth / (displayWidth / displayHeight),
+                        );
+                    else
+                        bufferWidth = Math.round(
+                            bufferHeight * (displayWidth / displayHeight),
+                        );
                 }
-
-                // Apply the (potentially capped) buffer size
+                bufferWidth = Math.max(1, bufferWidth);
+                bufferHeight = Math.max(1, bufferHeight);
                 canvasElement.width = bufferWidth;
                 canvasElement.height = bufferHeight;
-                // <<< End Limit >>>
-
                 viewCenter = { x: logicalWidth / 2, y: logicalHeight / 2 };
                 viewScale = 1.0;
                 lastViewport = null;
-
                 if (groups.length === 0) addNewGroup();
-
                 requestAnimationFrame(() => {
-                    setTimeout(() => {
-                        if (!canvasElement || !imageBitmap) return;
-                        resetZoomToFit();
-                        redrawCanvas();
-                    }, 10);
+                    if (!canvasElement || !imageBitmap || !canvasAreaElement)
+                        return;
+                    resetZoomToFit();
+                    redrawCanvas();
                 });
                 mode = "scaling";
             })
@@ -271,167 +249,245 @@
                 alert("Image load error.");
                 reset();
             });
-        // <<< End createImageBitmap >>>
     }
 
-    // --- Unit Conversion ---
-    function convertLinearValue(
-        v: number,
-        from: LinearUnit | DiameterUnit | DistanceUnit,
+    // --- Unit Conversion Helpers (Using moa library) ---
+    // Helper to convert a value *from* referenceUnit *to* meters
+    function refUnitToMeters(value: number): number {
+        switch (referenceUnit) {
+            case "inches":
+                return moa.in2m(value);
+            case "cm":
+                return moa.cm2m(value);
+            case "mm":
+                return moa.cm2m(value / 10);
+            case "meters":
+                return value;
+            case "yards":
+                return moa.yd2m(value);
+            default:
+                return value; // Should not happen with LinearUnit type
+        }
+    }
+    // Helper to convert a value *from* meters *to* a target unit
+    function metersToUnit(
+        value: number,
+        targetUnit: LinearUnit | DistanceUnit,
+    ): number {
+        switch (targetUnit) {
+            case "inches":
+                return moa.m2in(value);
+            case "cm":
+                return moa.m2cm(value);
+            case "mm":
+                return moa.m2cm(value) * 10;
+            case "meters":
+                return value;
+            case "yards":
+                return moa.m2yd(value);
+            default:
+                return value; // Should not happen
+        }
+    }
+    // Helper: Convert value from 'from' unit to 'to' unit via meters
+    function convertUnits(
+        value: number,
+        from: LinearUnit | DistanceUnit | DiameterUnit,
         to: LinearUnit | DistanceUnit,
     ): number {
-        /*...*/ if (from === to) return v;
-        let mm: number;
+        if (from === to) return value;
+        let meters: number;
         switch (from) {
             case "inches":
-                mm = v * IN_TO_MM;
+                meters = moa.in2m(value);
                 break;
             case "cm":
-                mm = v * 10;
+                meters = moa.cm2m(value);
                 break;
             case "mm":
-                mm = v;
+                meters = moa.cm2m(value / 10);
                 break;
             case "yards":
-                mm = v * YARDS_TO_MM;
+                meters = moa.yd2m(value);
                 break;
             case "meters":
-                mm = v * METERS_TO_MM;
+                meters = value;
                 break;
             default:
-                return v;
+                meters = value; // Fallback for unknown DiameterUnit not covered above
         }
-        switch (to) {
-            case "inches":
-                return mm / IN_TO_MM;
-            case "cm":
-                return mm / 10;
-            case "mm":
-                return mm;
-            case "yards":
-                return mm / YARDS_TO_MM;
-            case "meters":
-                return mm / METERS_TO_MM;
-            default:
-                return v;
-        }
+        return metersToUnit(meters, to);
     }
 
-    // --- Coordinate Transformation ---
+    // --- Coordinate Transformation  ---
     function imageToCanvasCoords(imgP: Point): Point | null {
-        if (!lastViewport || !canvasElement) return null;
+        if (
+            !lastViewport ||
+            !canvasElement ||
+            letterboxParams.dWidth <= 0 ||
+            letterboxParams.dHeight <= 0
+        )
+            return null;
         const { sx, sy, sWidth, sHeight } = lastViewport;
-        const cW = canvasElement.width;
-        const cH = canvasElement.height;
-        const rX = imgP.x - sx;
-        const rY = imgP.y - sy;
-        const cX = (rX / sWidth) * cW;
-        const cY = (rY / sHeight) * cH;
-        return { x: cX, y: cY };
+        const { dx, dy, dWidth, dHeight } = letterboxParams;
+
+        const relX = sWidth > 0 ? (imgP.x - sx) / sWidth : 0;
+        const relY = sHeight > 0 ? (imgP.y - sy) / sHeight : 0;
+        return { x: dx + relX * dWidth, y: dy + relY * dHeight };
     }
     function canvasToImageCoords(cvsPtrP: Point): Point | null {
         if (
             !lastViewport ||
             !canvasElement ||
             !canvasElement.clientWidth ||
-            !canvasElement.clientHeight
+            !canvasElement.clientHeight ||
+            letterboxParams.dWidth <= 0 ||
+            letterboxParams.dHeight <= 0 ||
+            !imageBitmap
         )
             return null;
         const { sx, sy, sWidth, sHeight } = lastViewport;
-        const dW = canvasElement.clientWidth;
-        const dH = canvasElement.clientHeight;
-        const pX = cvsPtrP.x / dW;
-        const pY = cvsPtrP.y / dH;
-        const imgX = sx + pX * sWidth;
-        const imgY = sy + pY * sHeight;
-        return { x: imgX, y: imgY };
+        const {
+            dx: dxBuf,
+            dy: dyBuf,
+            dWidth: dWidthBuf,
+            dHeight: dHeightBuf,
+        } = letterboxParams;
+        const displayW = canvasElement.clientWidth;
+        const displayH = canvasElement.clientHeight;
+        const bufferW = canvasElement.width;
+        const bufferH = canvasElement.height;
+        const ptrXBuf = (cvsPtrP.x / displayW) * bufferW;
+        const ptrYBuf = (cvsPtrP.y / displayH) * bufferH;
+        if (
+            ptrXBuf < dxBuf ||
+            ptrXBuf > dxBuf + dWidthBuf ||
+            ptrYBuf < dyBuf ||
+            ptrYBuf > dyBuf + dHeightBuf
+        )
+            return null;
+        const relX = dWidthBuf > 0 ? (ptrXBuf - dxBuf) / dWidthBuf : 0;
+        const relY = dHeightBuf > 0 ? (ptrYBuf - dyBuf) / dHeightBuf : 0;
+        const imgX = sx + relX * sWidth;
+        const imgY = sy + relY * sHeight;
+        return {
+            x: Math.max(0, Math.min(imgX, imageBitmap.width)),
+            y: Math.max(0, Math.min(imgY, imageBitmap.height)),
+        };
     }
 
-    // --- Viewport Calculation ---
-    // <<< Updated to use imageBitmap >>>
+    // --- Viewport Calculation  ---
     function calculateViewport(): ViewportState | null {
         if (
             !canvasElement ||
-            !imageBitmap || // Use imageBitmap
-            !canvasElement.clientWidth || // Use display dimensions directly
+            !imageBitmap ||
+            !canvasElement.clientWidth ||
             !canvasElement.clientHeight
         )
             return null;
-
-        const imgW = imageBitmap.width; // Use bitmap width
-        const imgH = imageBitmap.height; // Use bitmap height
-
-        // Calculate source rect based on display size and view scale
-        let sW = canvasElement.clientWidth / viewScale;
-        let sH = canvasElement.clientHeight / viewScale;
-
-        // Clamp source size to image dimensions
-        sW = Math.min(sW, imgW);
-        sH = Math.min(sH, imgH);
-
-        // Calculate source top-left based on view center
-        let sx = viewCenter.x - sW / 2;
-        let sy = viewCenter.y - sH / 2;
-
-        // Clamp source top-left to image bounds
-        sx = Math.max(0, Math.min(sx, imgW - sW));
-        sy = Math.max(0, Math.min(sy, imgH - sH));
-
-        // Recalculate source size based on clamped top-left (handles edge cases)
-        sW = Math.min(sW, imgW - sx);
-        sH = Math.min(sH, imgH - sy);
-
-        // Ensure non-zero dimensions
-        if (sW <= 0) sW = 1;
-        if (sH <= 0) sH = 1;
-
-        return { sx, sy, sWidth: sW, sHeight: sH };
+        const imgW = imageBitmap.width;
+        const imgH = imageBitmap.height;
+        const displayW = canvasElement.clientWidth;
+        const displayH = canvasElement.clientHeight;
+        let sWidth = displayW / viewScale;
+        let sHeight = displayH / viewScale;
+        let sx = viewCenter.x - sWidth / 2;
+        let sy = viewCenter.y - sHeight / 2;
+        if (sx < 0) {
+            sWidth += sx;
+            sx = 0;
+        }
+        if (sy < 0) {
+            sHeight += sy;
+            sy = 0;
+        }
+        if (sx + sWidth > imgW) sWidth = imgW - sx;
+        if (sy + sHeight > imgH) sHeight = imgH - sy;
+        sWidth = Math.max(1, sWidth);
+        sHeight = Math.max(1, sHeight);
+        sx = Math.max(0, Math.min(sx, imgW - sWidth));
+        sy = Math.max(0, Math.min(sy, imgH - sHeight));
+        return { sx, sy, sWidth, sHeight };
     }
 
     // --- Drawing Functions ---
-    // <<< Updated to use imageBitmap >>>
+    // --- redrawCanvas  ---
     function redrawCanvas(): void {
-        if (
-            !ctx ||
-            !canvasElement ||
-            !imageBitmap // Check bitmap
-        )
-            return;
-
+        if (!ctx || !canvasElement || !imageBitmap) return;
         const vp = calculateViewport();
-        if (!vp) return; // Viewport calculation failed (e.g., canvas not ready)
-
-        lastViewport = vp; // Store the calculated viewport state
+        if (!vp) return;
+        lastViewport = vp;
         const { sx, sy, sWidth, sHeight } = vp;
-        const cW = canvasElement.width; // Target canvas buffer width
-        const cH = canvasElement.height; // Target canvas buffer height
-
+        const cW = canvasElement.width;
+        const cH = canvasElement.height;
         ctx.save();
-        // Clear canvas with white (or desired background)
-        ctx.fillStyle = "#FFF";
+        ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, cW, cH);
-
-        // Disable smoothing for potentially sharper rendering when zooming
-        ctx.imageSmoothingEnabled = false;
-
-        // Draw the calculated portion of the image bitmap onto the canvas buffer
-        ctx.drawImage(imageBitmap, sx, sy, sWidth, sHeight, 0, 0, cW, cH);
-
-        // Draw scaling line if present
+        ctx.imageSmoothingEnabled = true;
+        let dx = 0,
+            dy = 0,
+            dWidth = cW,
+            dHeight = cH;
+        if (sWidth > 0 && sHeight > 0) {
+            const sourceAspect = sWidth / sHeight;
+            const bufferAspect = cW / cH;
+            if (
+                !isNaN(sourceAspect) &&
+                isFinite(sourceAspect) &&
+                sourceAspect > 0
+            ) {
+                if (sourceAspect >= bufferAspect) {
+                    dHeight = cW / sourceAspect;
+                    dy = (cH - dHeight) / 2;
+                } else {
+                    dWidth = cH * sourceAspect;
+                    dx = (cW - dWidth) / 2;
+                }
+            } else {
+                dWidth = 0;
+                dHeight = 0;
+            }
+        } else {
+            dWidth = 0;
+            dHeight = 0;
+        }
+        dWidth = Math.max(1, Math.min(cW, dWidth || 0));
+        dHeight = Math.max(1, Math.min(cH, dHeight || 0));
+        dx = Math.max(0, Math.min(cW - dWidth, dx || 0));
+        dy = Math.max(0, Math.min(cH - dHeight, dy || 0));
+        letterboxParams = { dx, dy, dWidth, dHeight };
+        if (dWidth > 0 && dHeight > 0 && sWidth > 0 && sHeight > 0)
+            ctx.drawImage(
+                imageBitmap,
+                sx,
+                sy,
+                sWidth,
+                sHeight,
+                dx,
+                dy,
+                dWidth,
+                dHeight,
+            );
+        ctx.save(); // Save before overlays
         if (refLineStart && refLineEnd) {
             const sC = imageToCanvasCoords(refLineStart);
             const eC = imageToCanvasCoords(refLineEnd);
-            if (sC && eC) drawScalingLine(ctx, sC, eC);
+            if (
+                sC &&
+                eC &&
+                Number.isFinite(sC.x) &&
+                Number.isFinite(sC.y) &&
+                Number.isFinite(eC.x) &&
+                Number.isFinite(eC.y)
+            ) {
+                drawScalingLine(ctx, sC, eC);
+            }
         }
-
-        // Draw group elements if scale is calculated
-        if (scale) {
+        if (scale)
             groups.forEach((g, i) => drawGroupElements(ctx!, g, i, scale!));
-        }
-
-        ctx.restore();
+        ctx.restore(); // Restore after overlays
     }
-
+    // --- drawScalingLine  ---
     function drawScalingLine(
         ctx: CanvasRenderingContext2D,
         startC: Point,
@@ -441,18 +497,17 @@
         ctx.beginPath();
         ctx.moveTo(startC.x, startC.y);
         ctx.lineTo(endC.x, endC.y);
-        // Use state variables for color and width
         ctx.strokeStyle = scaleLineColor;
         ctx.lineWidth = Math.max(dpr, lineWidthBase * dpr);
         ctx.setLineDash([]);
         ctx.stroke();
-        // Use state variable for marker color and size
         ctx.fillStyle = scaleLineColor;
         const mS = Math.max(2 * dpr, lineWidthBase * dpr);
         ctx.fillRect(startC.x - mS / 2, startC.y - mS / 2, mS, mS);
         ctx.fillRect(endC.x - mS / 2, endC.y - mS / 2, mS, mS);
         ctx.restore();
     }
+    // --- drawGroupElements (Using 'convertUnits') ---
     function drawGroupElements(
         ctx: CanvasRenderingContext2D,
         g: ShotGroup,
@@ -460,68 +515,63 @@
         sc: number,
     ) {
         const act = i === activeGroupIndex;
-        const dUnit = convertLinearValue(
+        // Calculate bullet radius in IMAGE pixels
+        const bulletDiameterInRefUnit = convertUnits(
             bulletDiameter,
             bulletDiameterUnit,
             referenceUnit,
         );
-        const bRImg = (dUnit / 2) * sc;
-        if (!lastViewport) return;
-        // Guard against missing viewport
-        const lPR = ctx.canvas.width / lastViewport.sWidth;
-        const bRCvs = bRImg * lPR;
+        const bRImg = (bulletDiameterInRefUnit / 2) * sc; // Bullet radius in image pixels
 
-        // Use state variables for colors
-        const hC = act ? bulletHoleColor : inactiveBulletHoleColor; // Use variable (consider making inactive adjustable too)
+        // Need viewScale and dpr for the calculation
+        if (!lastViewport || viewScale <= 0 || dpr <= 0) return;
+
+        // --- Colors and Line Width (Unchanged) ---
+        const hC = act ? bulletHoleColor : inactiveBulletHoleColor;
         const hSC = selectedHoleColor;
-        // Use variable
         const ceC = act ? centroidColor : "rgba(0,116,217,0.7)";
-        // Use variable (adjust inactive?)
         const aiC = act ? aimPointColor : "rgba(255,133,27,0.7)";
-        // Use variable (adjust inactive?)
         const ofC = offsetLineColor;
-        // Use variable
-
-        // Use state variable for base line width
-        const lW = Math.max(0.5 * dpr, lineWidthBase * dpr);
-        // Use variable
+        const lW = Math.max(0.5 * dpr, lineWidthBase * dpr); // Base line width in buffer pixels
 
         ctx.save();
+
         // --- Draw Bullet Holes ---
         g.bulletHolesPixels.forEach((hImg: Point, hIdx) => {
-            const hCvs = imageToCanvasCoords(hImg);
-            if (!hCvs) return;
-            const isSelected = act && hIdx === selectedHoleIndex;
-            ctx.strokeStyle = isSelected ? hSC : hC; // Use selected/normal color vars
+            const hCvs = imageToCanvasCoords(hImg); // Center point in canvas coords
+            if (!hCvs) return; // Hole center is not visible
 
-            // Use base width and multiplier for selected hole
+            // --- New Radius Calculation (Directly using viewScale and dpr) ---
+            // Radius in Buffer Pixels = (Radius in Image Pixels) * viewScale * dpr
+            const bRCvs = bRImg * viewScale * dpr;
+            // --- End New Radius Calculation ---
+
+            const isSelected = act && hIdx === selectedHoleIndex;
+            ctx.strokeStyle = isSelected ? hSC : hC;
             ctx.lineWidth = isSelected
-                ? Math.max(dpr, lW * selectedHoleLineWidthMultiplier) // Use multiplier
+                ? Math.max(dpr, lW * selectedHoleLineWidthMultiplier)
                 : lW;
             ctx.beginPath();
-            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr, bRCvs), 0, Math.PI * 2); // Keep bullet radius based on
+            // Draw arc with the calculated canvas buffer pixel radius (ensure minimum size)
+            ctx.arc(hCvs.x, hCvs.y, Math.max(dpr * 0.5, bRCvs), 0, Math.PI * 2); // Minimum radius 0.5 display pixels
             ctx.stroke();
         });
+
+        // --- Draw Centroid, Aim Point, Offset Line, Info Box (Unchanged from previous version) ---
         let ceCvs: Point | null = null;
         let aiCvs: Point | null = null;
         if (g.aimingPointPixels)
             aiCvs = imageToCanvasCoords(g.aimingPointPixels);
-        if (g.resultsValid && g.centroidReal) {
-            const ceImg = {
+        if (g.resultsValid && g.centroidReal)
+            ceCvs = imageToCanvasCoords({
                 x: g.centroidReal.x * sc,
                 y: g.centroidReal.y * sc,
-            };
-            ceCvs = imageToCanvasCoords(ceImg);
-        }
-
-        // --- Draw Centroid Marker ---
+            });
         if (ceCvs) {
+            // Draw Centroid
             ctx.strokeStyle = ceC;
-            // Use variable
             ctx.lineWidth = lW;
-            // Use base variable
             const cs = Math.max(3 * dpr, 6 * dpr);
-            // Keep size relative to DPR for visibility? Or make configurable? Let's keep for now.
             ctx.beginPath();
             ctx.moveTo(ceCvs.x - cs, ceCvs.y);
             ctx.lineTo(ceCvs.x + cs, ceCvs.y);
@@ -529,17 +579,13 @@
             ctx.lineTo(ceCvs.x, ceCvs.y + cs);
             ctx.stroke();
         }
-
-        // --- Draw Aiming Point Marker ---
         if (aiCvs) {
+            // Draw Aim Point
             ctx.strokeStyle = aiC;
-            // Use variable
             ctx.lineWidth = lW;
-            // Use base variable
             const dS = Math.max(dpr, 3 * dpr);
-            // Keep dash relative?
             ctx.setLineDash([dS, dS]);
-            const cs = Math.max(4 * dpr, lineWidthBase * 4 * dpr); // Keep size relative?
+            const cs = Math.max(4 * dpr, lineWidthBase * 4 * dpr);
             ctx.beginPath();
             ctx.moveTo(aiCvs.x - cs, aiCvs.y);
             ctx.lineTo(aiCvs.x + cs, aiCvs.y);
@@ -547,17 +593,14 @@
             ctx.lineTo(aiCvs.x, aiCvs.y + cs);
             ctx.stroke();
             ctx.setLineDash([]);
-            // --- Draw Offset Line ---
             if (ceCvs) {
+                // Draw Offset Line
                 ctx.strokeStyle = ofC;
-                // Use variable
-                // Use base width and offset multiplier
                 ctx.lineWidth = Math.max(
                     0.5 * dpr,
                     lW * offsetLineWidthMultiplier,
-                ); // Use multiplier
+                );
                 const oD = Math.max(1.5 * dpr, 4 * dpr);
-                // Keep dash relative?
                 ctx.setLineDash([oD, oD]);
                 ctx.beginPath();
                 ctx.moveTo(aiCvs.x, aiCvs.y);
@@ -566,44 +609,34 @@
                 ctx.setLineDash([]);
             }
         }
-
-        // --- Draw Info Box ---
         if (g.resultsValid && (ceCvs || g.infoBoxAnchorImage)) {
-            // Pass style variables to drawInfoBox
+            // Draw Info Box
             drawInfoBox(ctx, g, {
                 fontSize: legendFontSize,
                 textColor: legendTextColor,
                 bgColor: legendBgColor,
-                borderColor: legendBorderColor, // Pass border color too
+                borderColor: legendBorderColor,
             });
         }
         ctx.restore();
     }
-
-    // Add a new interface for style options
+    // --- drawInfoBox (Using 'convertUnits') ---
     interface InfoBoxStyleOptions {
         fontSize: number;
         textColor: string;
         bgColor: string;
         borderColor: string;
     }
-
     function drawInfoBox(
-        context: CanvasRenderingContext2D,
+        ctx: CanvasRenderingContext2D,
         group: ShotGroup,
-        // Add style options parameter with defaults matching state vars
-        styles: InfoBoxStyleOptions = {
-            fontSize: legendFontSize,
-            textColor: legendTextColor,
-            bgColor: legendBgColor,
-            borderColor: legendBorderColor,
-        },
+        styles: InfoBoxStyleOptions,
     ) {
         const lines: string[] = [];
-        // ... (generate text lines as before) ...
         lines.push(`${group.name} (${group.bulletHolesReal.length} shots)`);
         if (group.maxSpread !== null) {
-            const d = convertLinearValue(
+            // Display Max Spread
+            const d = convertUnits(
                 group.maxSpread,
                 referenceUnit,
                 resultDisplayUnit,
@@ -617,11 +650,11 @@
             )
                 l += ` (${group.maxSpreadMRAD.toFixed(2)} MRAD)`;
             lines.push(l);
-        } else if (group.bulletHolesReal.length < 2) {
+        } else if (group.bulletHolesReal.length < 2)
             lines.push(`Spread: N/A (<2 shots)`);
-        }
         if (group.meanRadius !== null) {
-            const d = convertLinearValue(
+            // Display Mean Radius
+            const d = convertUnits(
                 group.meanRadius,
                 referenceUnit,
                 resultDisplayUnit,
@@ -637,7 +670,8 @@
             lines.push(l);
         }
         if (group.offsetFromAim !== null) {
-            const d = convertLinearValue(
+            // Display Offset
+            const d = convertUnits(
                 group.offsetFromAim.distance,
                 referenceUnit,
                 resultDisplayUnit,
@@ -646,133 +680,108 @@
                 `Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
             );
         }
-
-        context.save();
-        // Use font size from styles
+        // Box drawing logic (mostly unchanged)
+        ctx.save();
         const fS = styles.fontSize;
-        const pad = 4; // Keep padding fixed? Or make configurable?
+        const pad = 4;
         const lH = fS * 1.2;
-        // Line height based on font size
-        context.font = `${fS}px sans-serif`;
-        // Use parameter
+        ctx.font = `${fS}px sans-serif`;
         let maxW = 0;
-        lines.forEach((ln) => {
-            maxW = Math.max(maxW, context.measureText(ln).width);
-        });
+        lines.forEach(
+            (ln) => (maxW = Math.max(maxW, ctx.measureText(ln).width)),
+        );
         const boxW = maxW + pad * 2;
         const boxH = lines.length * lH + pad * 2;
-        // ... (rest of info box size and anchor calculation as before) ...
         if (
             !group.infoBoxSize ||
             group.infoBoxSize.width !== boxW ||
             group.infoBoxSize.height !== boxH
-        ) {
+        )
             group.infoBoxSize = { width: boxW, height: boxH };
-        }
-        context.restore(); // Restore here to avoid affecting anchor calc?
-
-        context.save(); // Re-save for drawing
-
+        ctx.restore();
+        ctx.save(); // Re-save for drawing
         if (
             !group.infoBoxAnchorImage &&
             group.centroidReal &&
             scale &&
-            lastViewport
+            lastViewport &&
+            ctx.canvas.clientHeight > 0 &&
+            lastViewport.sHeight > 0
         ) {
+            // Calculate anchor if needed
             const cenImg = {
                 x: group.centroidReal.x * scale,
                 y: group.centroidReal.y * scale,
             };
-            const offX = 15; // Keep offset fixed?
-
-            // Calculate anchor based on image coords, but offset based on display pixels
+            const offXImage = 15;
             const yOffsetPixels = boxH / 2;
             const yOffsetImage =
-                (yOffsetPixels / context.canvas.clientHeight) *
+                (yOffsetPixels / ctx.canvas.clientHeight) *
                 lastViewport.sHeight;
-
             group.infoBoxAnchorImage = {
-                x: cenImg.x + offX, // Simple image offset for X
-                y: cenImg.y - yOffsetImage, // Convert Y offset to image space
+                x: cenImg.x + offXImage,
+                y: cenImg.y - yOffsetImage,
             };
-            groups = groups; // Trigger reactivity
+            groups = groups;
         }
         let pos: Point | null = null;
-        if (group.infoBoxAnchorImage) {
+        if (group.infoBoxAnchorImage)
             pos = imageToCanvasCoords(group.infoBoxAnchorImage);
-        }
-
         if (!pos || !group.infoBoxSize) {
-            context.restore(); // Make sure to restore if exiting early
+            ctx.restore();
             return;
         }
-
-        // Clamp position based on calculated size (using dpr for render size)
+        if (ctx.canvas.width <= 0 || ctx.canvas.height <= 0) {
+            ctx.restore();
+            return;
+        } // Avoid NaN/Infinity
         pos.x = Math.max(
             0,
-            Math.min(
-                pos.x,
-                context.canvas.width - group.infoBoxSize.width * dpr, // Use box size * dpr
-            ),
-        );
+            Math.min(pos.x, ctx.canvas.width - group.infoBoxSize.width * dpr),
+        ); // Clamp X
         pos.y = Math.max(
             0,
-            Math.min(
-                pos.y,
-                context.canvas.height - group.infoBoxSize.height * dpr, // Use box size * dpr
-            ),
-        );
-        // context.save(); // Already saved
-
-        // Use colors from style parameters
-        // Add alpha transparency (e.g., E6 = 90%) to the background color
+            Math.min(pos.y, ctx.canvas.height - group.infoBoxSize.height * dpr),
+        ); // Clamp Y
         const bgColorWithAlpha = styles.bgColor.startsWith("#")
             ? styles.bgColor + "E6"
-            : styles.bgColor; // Handle non-hex potentially?
-        context.fillStyle = bgColorWithAlpha; // Use parameter + alpha
-        context.strokeStyle = styles.borderColor;
-        // Use parameter
-        context.lineWidth = 1 * dpr; // Keep border width fixed?
-        // Or make configurable?
-
-        context.fillRect(
+            : styles.bgColor;
+        ctx.fillStyle = bgColorWithAlpha;
+        ctx.strokeStyle = styles.borderColor;
+        ctx.lineWidth = 1 * dpr;
+        ctx.fillRect(
             pos.x,
             pos.y,
-            group.infoBoxSize.width * dpr, // Use calculated size * dpr
-            group.infoBoxSize.height * dpr, // Use calculated size * dpr
-        );
-        context.strokeRect(
+            group.infoBoxSize.width * dpr,
+            group.infoBoxSize.height * dpr,
+        ); // Draw box background
+        ctx.strokeRect(
             pos.x,
             pos.y,
-            group.infoBoxSize.width * dpr, // Use calculated size * dpr
-            group.infoBoxSize.height * dpr, // Use calculated size * dpr
-        );
-
-        context.fillStyle = styles.textColor;
-        // Use parameter
-        // Use font size from styles, adjusted by dpr
-        context.font = `${fS * dpr}px sans-serif`;
-        // Use parameter * dpr
-        context.textAlign = "left";
-        context.textBaseline = "top";
-        lines.forEach((line, i) => {
-            // Adjust text position by dpr
-            context.fillText(
+            group.infoBoxSize.width * dpr,
+            group.infoBoxSize.height * dpr,
+        ); // Draw box border
+        ctx.fillStyle = styles.textColor;
+        ctx.font = `${fS * dpr}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        lines.forEach((line, i) =>
+            ctx.fillText(
                 line,
-                pos!.x + pad * dpr, // Use pad * dpr
-                pos!.y + pad * dpr + i * lH * dpr, // Use pad, line height * dpr
-            );
-        });
-        context.restore(); // Restore drawing state
+                pos!.x + pad * dpr,
+                pos!.y + pad * dpr + i * lH * dpr,
+            ),
+        ); // Draw text
+        ctx.restore();
     }
 
-    // --- Event Handlers ---
+    // --- Event Handlers (Unchanged logic) ---
     function getCanvasDisplayCoords(
         e: MouseEvent | PointerEvent,
     ): Point | null {
         if (!canvasElement) return null;
         const r = canvasElement.getBoundingClientRect();
-        if (!r.width || !r.height) return null; // Avoid division by zero if not displayed
+        if (!r.width || !r.height) return null;
         return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
 
@@ -780,10 +789,10 @@
         const t = e.target as HTMLInputElement;
         const f = t.files?.[0];
         if (f && f.type.startsWith("image/")) {
-            imageFile = f; // Store the file object <<< Needed for createImageBitmap
+            imageFile = f;
             if (imageUrl && imageUrl.startsWith("blob:"))
                 URL.revokeObjectURL(imageUrl);
-            imageUrl = URL.createObjectURL(f); // Still useful for display elsewhere maybe?
+            imageUrl = URL.createObjectURL(f);
             resetStateForNewImage();
             mode = "loading";
             requestAnimationFrame(setupCanvas);
@@ -795,26 +804,31 @@
             reset();
         }
     }
+
     function handleCanvasPointerDown(e: PointerEvent) {
         if (!canvasElement || !ctx || !lastViewport) return;
         const dCoords = getCanvasDisplayCoords(e);
         if (!dCoords) return;
         isDraggingInfoBox = false;
         isPanning = false;
-        // Check for info box drag first
+        // Check info box drag first
         for (let i = groups.length - 1; i >= 0; i--) {
             const g = groups[i];
-            if (g.resultsValid && g.infoBoxAnchorImage && g.infoBoxSize) {
+            if (
+                g.resultsValid &&
+                g.infoBoxAnchorImage &&
+                g.infoBoxSize &&
+                canvasElement.width > 0 &&
+                canvasElement.height > 0 &&
+                canvasElement.clientWidth > 0 &&
+                canvasElement.clientHeight > 0
+            ) {
                 const aImg = g.infoBoxAnchorImage;
-                const sLog = g.infoBoxSize; // Logical size (pixels without dpr)
-                const aCvsRender = imageToCanvasCoords(aImg); // Anchor position in *render* coordinates (with dpr)
-
+                const sLog = g.infoBoxSize;
+                const aCvsRender = imageToCanvasCoords(aImg);
                 if (aCvsRender) {
-                    // Calculate the bounding box in *render* coordinates
                     const boxRenderWidth = sLog.width * dpr;
                     const boxRenderHeight = sLog.height * dpr;
-
-                    // Pointer coords are in *display* coordinates. Convert box to display coords.
                     const displayX =
                         (aCvsRender.x / canvasElement.width) *
                         canvasElement.clientWidth;
@@ -827,14 +841,12 @@
                     const displayHeight =
                         (boxRenderHeight / canvasElement.height) *
                         canvasElement.clientHeight;
-
                     const displayRect: Rect = {
                         x: displayX,
                         y: displayY,
                         width: displayWidth,
                         height: displayHeight,
                     };
-
                     if (isPointInRect(dCoords, displayRect)) {
                         isDraggingInfoBox = true;
                         draggingGroupIndex = i;
@@ -843,14 +855,13 @@
                         (e.target as HTMLElement).setPointerCapture(
                             e.pointerId,
                         );
-                        e.stopPropagation(); // Prevent other actions
+                        e.stopPropagation();
                         return;
                     }
                 }
             }
         }
-
-        // If not dragging info box, check for panning or drawing ref line
+        // Check panning or drawing ref line
         if (mode === "panning") {
             isPanning = true;
             panStartPointerCoords = dCoords;
@@ -860,7 +871,6 @@
             e.stopPropagation();
             return;
         }
-
         const iCoords = canvasToImageCoords(dCoords);
         if (mode === "scaling" && iCoords) {
             (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -874,33 +884,35 @@
     }
 
     function handleWindowPointerMove(e: PointerEvent) {
-        if (!canvasElement || !lastViewport) return; // Need viewport info
+        if (
+            !canvasElement ||
+            !lastViewport ||
+            !canvasElement.clientWidth ||
+            !canvasElement.clientHeight ||
+            canvasElement.clientWidth <= 0 ||
+            canvasElement.clientHeight <= 0
+        )
+            return;
         const curPtrD = getCanvasDisplayCoords(e);
         if (!curPtrD) return;
-
-        // --- Panning Logic ---
+        // Panning
         if (
             isPanning &&
             panStartPointerCoords &&
             panStartViewCenter &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const dxD = curPtrD.x - panStartPointerCoords.x; // Delta in display pixels
-            const dyD = curPtrD.y - panStartPointerCoords.y; // Delta in display pixels
-
-            // Convert display pixel delta to image coordinate delta
+            const dxD = curPtrD.x - panStartPointerCoords.x;
+            const dyD = curPtrD.y - panStartPointerCoords.y;
             const dxI = (dxD / canvasElement.clientWidth) * lastViewport.sWidth;
             const dyI =
                 (dyD / canvasElement.clientHeight) * lastViewport.sHeight;
-
-            // Update view center based on starting point and image delta
             viewCenter.x = panStartViewCenter.x - dxI;
             viewCenter.y = panStartViewCenter.y - dyI;
-
-            clampViewCenter(); // Keep view within bounds
-            requestAnimationFrame(redrawCanvas); // Redraw efficiently
+            clampViewCenter();
+            requestAnimationFrame(redrawCanvas);
         }
-        // --- Info Box Dragging Logic ---
+        // Info Box Dragging
         else if (
             isDraggingInfoBox &&
             draggingGroupIndex !== null &&
@@ -908,57 +920,49 @@
             dragStartInfoBoxAnchorImage &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const dxD = curPtrD.x - dragStartPointerCoords.x; // Delta in display pixels
-            const dyD = curPtrD.y - dragStartPointerCoords.y; // Delta in display pixels
-
+            const dxD = curPtrD.x - dragStartPointerCoords.x;
+            const dyD = curPtrD.y - dragStartPointerCoords.y;
             const g = groups[draggingGroupIndex];
             if (g && lastViewport) {
-                // Check lastViewport exists
-                // Convert display pixel delta to image coordinate delta
                 const dxI =
                     (dxD / canvasElement.clientWidth) * lastViewport.sWidth;
                 const dyI =
                     (dyD / canvasElement.clientHeight) * lastViewport.sHeight;
-
-                // Calculate new anchor position in image coordinates
-                const nAX = dragStartInfoBoxAnchorImage.x + dxI;
-                const nAY = dragStartInfoBoxAnchorImage.y + dyI;
-
-                g.infoBoxAnchorImage = { x: nAX, y: nAY };
-                groups = groups; // Trigger reactivity
-                requestAnimationFrame(redrawCanvas); // Redraw efficiently
+                g.infoBoxAnchorImage = {
+                    x: dragStartInfoBoxAnchorImage.x + dxI,
+                    y: dragStartInfoBoxAnchorImage.y + dyI,
+                };
+                groups = groups;
+                requestAnimationFrame(redrawCanvas);
             }
         }
-        // --- Scaling Line Drawing Logic ---
+        // Scaling Line Drawing
         else if (
             mode === "scaling" &&
             isDrawingRefLine &&
             refLineStart &&
             canvasElement.hasPointerCapture(e.pointerId)
         ) {
-            const curPtrI = canvasToImageCoords(curPtrD); // Convert to image coords
+            const curPtrI = canvasToImageCoords(curPtrD);
             if (curPtrI) {
-                refLineEnd = curPtrI; // Update end point
-                requestAnimationFrame(redrawCanvas); // Redraw efficiently
+                refLineEnd = curPtrI;
+                requestAnimationFrame(redrawCanvas);
             }
         }
     }
 
     function handleWindowPointerUp(e: PointerEvent) {
-        let wasDragging = false; // Flag to check if a drag operation just ended
-
-        // --- Panning End ---
+        let wasDragging = false;
+        // Panning End
         if (isPanning && canvasElement?.hasPointerCapture(e.pointerId)) {
             canvasElement.releasePointerCapture(e.pointerId);
             isPanning = false;
             panStartPointerCoords = null;
             panStartViewCenter = null;
-            // Update cursor immediately
             if (canvasElement) canvasElement.style.cursor = canvasCursor;
             wasDragging = true;
-            // redrawCanvas(); // Redraw might not be needed if move handled it, but safe to keep
         }
-        // --- Info Box Drag End ---
+        // Info Box Drag End
         else if (
             isDraggingInfoBox &&
             canvasElement?.hasPointerCapture(e.pointerId)
@@ -969,9 +973,9 @@
             dragStartPointerCoords = null;
             dragStartInfoBoxAnchorImage = null;
             wasDragging = true;
-            redrawCanvas(); // Redraw to finalize position
+            redrawCanvas();
         }
-        // --- Scaling Line Draw End ---
+        // Scaling Line Draw End
         else if (
             mode === "scaling" &&
             isDrawingRefLine &&
@@ -982,137 +986,126 @@
             const finalPtrD = getCanvasDisplayCoords(e);
             if (finalPtrD) {
                 const finalI = canvasToImageCoords(finalPtrD);
-                if (finalI) refLineEnd = finalI; // Set final end point
+                if (finalI) refLineEnd = finalI;
             }
-
             if (refLineStart && refLineEnd) {
-                const ok = calculateScale(); // Attempt to calculate scale
-                if (ok) {
-                    mode = "placingHoles"; // Move to next mode if scale is valid
-                } else {
-                    // Reset ref line if scale calculation failed (e.g., too short)
+                if (calculateScale()) mode = "placingHoles";
+                else {
                     refLineStart = null;
                     refLineEnd = null;
                 }
             } else {
-                // Reset if something went wrong
                 refLineStart = null;
                 refLineEnd = null;
             }
             wasDragging = true;
-            redrawCanvas(); // Redraw to show final line or clear it
+            redrawCanvas();
         }
-
-        // Prevent click event immediately after drag/draw
+        // Prevent click after drag/draw
         if (wasDragging) {
             ignoreNextClick = true;
-            // Use a minimal timeout to reset the flag
             setTimeout(() => {
                 ignoreNextClick = false;
-            }, 50); // 50ms should be enough
+            }, 50);
         }
     }
 
     async function handleCanvasClick(e: MouseEvent) {
         if (ignoreNextClick) {
             ignoreNextClick = false;
-            return; // Skip click if it followed a drag/draw end
+            return;
         }
-
-        // Ignore clicks during panning or drawing ref line (handled by pointer down/up/move)
-        if (isPanning || isDrawingRefLine) return;
-
-        if (!canvasElement || activeGroupIndex === -1) return; // Need canvas and active group
-
+        if (
+            isPanning ||
+            isDrawingRefLine ||
+            !canvasElement ||
+            activeGroupIndex === -1
+        )
+            return;
         const dCoords = getCanvasDisplayCoords(e);
-        if (!dCoords) return; // Click coords invalid
-
+        if (!dCoords) return;
         const iCoords = canvasToImageCoords(dCoords);
-        if (!iCoords) return; // Image coords invalid
-
+        if (!iCoords) return;
         const g = groups[activeGroupIndex];
-
-        // --- Placing Holes ---
+        // Placing Holes
         if (mode === "placingHoles" && scale) {
-            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Calculate real coords
+            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Real coords in referenceUnit
             g.bulletHolesPixels.push(iCoords);
             g.bulletHolesReal.push(rCoords);
-            selectedHoleIndex = g.bulletHolesPixels.length - 1; // Select the new hole
+            selectedHoleIndex = g.bulletHolesPixels.length - 1;
             invalidateResults(activeGroupIndex);
-            groups = groups; // Trigger reactivity
-            await tick(); // Wait for Svelte update cycle
-            calculateGroupResults(activeGroupIndex); // Recalculate after adding hole
+            groups = groups;
+            await tick();
+            calculateGroupResults(activeGroupIndex);
             redrawCanvas();
         }
-        // --- Placing Aim Point ---
+        // Placing Aim Point
         else if (mode === "placingAim" && scale) {
-            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Calculate real coords
+            const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Real coords in referenceUnit
             g.aimingPointPixels = iCoords;
             g.aimingPointReal = rCoords;
             invalidateResults(activeGroupIndex);
-            groups = groups; // Trigger reactivity
-            await tick(); // Wait for Svelte update cycle
-            calculateGroupResults(activeGroupIndex); // Recalculate after adding aim point
-            mode = "placingHoles"; // Switch back to placing holes automatically
+            groups = groups;
+            await tick();
+            calculateGroupResults(activeGroupIndex);
+            mode = "placingHoles";
             redrawCanvas();
         }
-        // --- Selecting Hole ---
+        // Selecting Hole
         else if (mode === "selectingHole") {
-            if (!scale || !lastViewport || !canvasElement.width) return; // Need scale and viewport
-
-            // Define click tolerance in render pixels (adjust as needed)
-            const clickToleranceRenderPixels = 15 * dpr; // Tolerance in buffer pixels
-            // Convert tolerance to image pixels
+            if (
+                !scale ||
+                !lastViewport ||
+                !canvasElement.width ||
+                canvasElement.width <= 0
+            )
+                return;
+            const clickToleranceRenderPixels = 15 * dpr;
             const clickToleranceImagePixels =
                 (clickToleranceRenderPixels / canvasElement.width) *
                 lastViewport.sWidth;
             const clickToleranceImagePixelsSq =
                 clickToleranceImagePixels * clickToleranceImagePixels;
-
             let found = false;
             let closestIndex = -1;
             let minDistanceSq = Infinity;
-
-            // Iterate through holes to find the closest one within tolerance
             for (let i = g.bulletHolesPixels.length - 1; i >= 0; i--) {
                 const h = g.bulletHolesPixels[i];
                 const dx = iCoords.x - h.x;
                 const dy = iCoords.y - h.y;
-                const dSq = dx * dx + dy * dy; // Distance squared in image coordinates
-
+                const dSq = dx * dx + dy * dy;
                 if (dSq < clickToleranceImagePixelsSq && dSq < minDistanceSq) {
                     minDistanceSq = dSq;
                     closestIndex = i;
                     found = true;
                 }
             }
-
-            selectedHoleIndex = found ? closestIndex : null; // Select closest or deselect
-            redrawCanvas(); // Redraw to show selection change
+            selectedHoleIndex = found ? closestIndex : null;
+            redrawCanvas();
         }
     }
 
     function handleKeyDown(e: KeyboardEvent) {
         if (
             activeGroupIndex === -1 ||
-            selectedHoleIndex === null || // Only act if a hole is selected
+            selectedHoleIndex === null ||
             !scale ||
             !lastViewport ||
-            !canvasElement
+            !canvasElement ||
+            !canvasElement.clientWidth ||
+            !canvasElement.clientHeight ||
+            canvasElement.clientWidth <= 0 ||
+            canvasElement.clientHeight <= 0
         )
             return;
-
-        let dxI = 0; // Nudge delta in image pixels
-        let dyI = 0; // Nudge delta in image pixels
-
-        // Calculate nudge amount in image pixels based on display pixel constant
+        let dxI = 0;
+        let dyI = 0;
         const nudgeXImage =
             (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientWidth) *
             lastViewport.sWidth;
         const nudgeYImage =
             (NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientHeight) *
             lastViewport.sHeight;
-
         switch (e.key) {
             case "ArrowUp":
                 dyI = -nudgeYImage;
@@ -1128,18 +1121,18 @@
                 break;
             case "Delete":
             case "Backspace":
-                e.preventDefault(); // Prevent browser back navigation on Backspace
+                e.preventDefault();
                 deleteSelectedHole();
-                return; // Don't nudge after delete
+                return;
             default:
-                return; // Ignore other keys
+                return;
         }
-
-        e.preventDefault(); // Prevent arrow keys from scrolling the page
-        nudgeSelectedHolePx(dxI, dyI); // Apply the nudge
+        e.preventDefault();
+        nudgeSelectedHolePx(dxI, dyI);
     }
 
     // --- Logic ---
+    // --- calculateScale  ---
     function calculateScale(): boolean {
         if (
             !refLineStart ||
@@ -1152,23 +1145,17 @@
         }
         const dx = refLineEnd.x - refLineStart.x;
         const dy = refLineEnd.y - refLineStart.y;
-        const lenPx = Math.sqrt(dx * dx + dy * dy); // Length in image pixels
+        const lenPx = Math.sqrt(dx * dx + dy * dy);
         if (lenPx < MIN_SCALE_LINE_PIXELS) {
-            alert(
-                `Reference line is too short (must be >= ${MIN_SCALE_LINE_PIXELS} pixels). Please redraw.`,
-            );
+            alert(`Ref line too short (>= ${MIN_SCALE_LINE_PIXELS}px)`);
             scale = null;
+            refLineStart = null;
+            refLineEnd = null;
             return false;
         }
-        const newSc = lenPx / referenceLength; // pixels per referenceUnit
-
-        // Only recalculate if scale changes significantly (optional, avoids tiny updates)
-        // if (scale && Math.abs(newSc - scale) < 1e-6) return true;
-
-        scale = newSc;
-
-        // Recalculate real coordinates and invalidate results for all groups
+        scale = lenPx / referenceLength; // pixels per referenceUnit
         groups.forEach((g, i) => {
+            // Recalculate real coords and invalidate results
             g.bulletHolesReal = g.bulletHolesPixels.map((p) => ({
                 x: p.x / scale!,
                 y: p.y / scale!,
@@ -1180,26 +1167,22 @@
                   }
                 : null;
             invalidateResults(i);
-            // Reset info box anchor so it recalculates based on new scale/positions
-            g.infoBoxAnchorImage = null;
+            g.infoBoxAnchorImage = null; // Reset info box anchor
         });
-        groups = groups; // Trigger reactivity
-
-        // Use tick to ensure Svelte updates before recalculating results
+        groups = groups;
         tick().then(() => {
-            groups.forEach((_, i) => calculateGroupResults(i)); // Recalculate all groups
-            redrawCanvas(); // Redraw with new scale and results
+            groups.forEach((_, i) => calculateGroupResults(i));
+            redrawCanvas();
         });
-
         console.log(`Scale set: ${scale.toFixed(3)} pixels/${referenceUnit}`);
         return true;
     }
 
+    // --- calculateGroupResults (Using 'convertUnits' and moa.mrad2moa) ---
     function calculateGroupResults(idx: number) {
-        if (idx < 0 || idx >= groups.length || !scale) return; // Need valid index and scale
+        if (idx < 0 || idx >= groups.length || !scale) return;
         const g = groups[idx];
-
-        // Reset previous results
+        // Reset results
         g.centroidReal = null;
         g.meanRadius = null;
         g.maxSpread = null;
@@ -1208,15 +1191,13 @@
         g.maxSpreadMOA = null;
         g.maxSpreadMRAD = null;
         g.offsetFromAim = null;
-        g.resultsValid = false; // Mark as invalid until calculations complete
-
+        g.resultsValid = false;
         if (g.bulletHolesReal.length === 0) {
-            groups = groups; // Trigger reactivity (maybe needed for info box hide)
-            redrawCanvas(); // Redraw to clear old results
-            return; // No calculations needed for empty group
+            groups = groups;
+            redrawCanvas();
+            return;
         }
-
-        // --- Calculate Centroid ---
+        // --- Calculate Centroid (in referenceUnit) ---
         let sumX = 0,
             sumY = 0;
         g.bulletHolesReal.forEach((h) => {
@@ -1226,104 +1207,84 @@
         const n = g.bulletHolesReal.length;
         const centroidX = sumX / n;
         const centroidY = sumY / n;
-        g.centroidReal = { x: centroidX, y: centroidY };
-
-        // --- Calculate Mean Radius ---
+        g.centroidReal = { x: centroidX, y: centroidY }; // Store in referenceUnit
+        // --- Calculate Mean Radius (in referenceUnit) ---
         let sumDistFromCentroid = 0;
         g.bulletHolesReal.forEach((h) => {
             const dx = h.x - centroidX;
             const dy = h.y - centroidY;
             sumDistFromCentroid += Math.sqrt(dx * dx + dy * dy);
         });
-        g.meanRadius = sumDistFromCentroid / n;
-
-        // --- Calculate Max Spread (Extreme Spread) ---
+        g.meanRadius = sumDistFromCentroid / n; // Store in referenceUnit
+        // --- Calculate Max Spread (in referenceUnit) ---
         if (n >= 2) {
             let maxDistSq = 0;
-            for (let i = 0; i < n; i++) {
+            for (let i = 0; i < n; i++)
                 for (let j = i + 1; j < n; j++) {
                     const dx = g.bulletHolesReal[i].x - g.bulletHolesReal[j].x;
                     const dy = g.bulletHolesReal[i].y - g.bulletHolesReal[j].y;
                     maxDistSq = Math.max(maxDistSq, dx * dx + dy * dy);
                 }
-            }
-            g.maxSpread = Math.sqrt(maxDistSq);
-        } else {
-            g.maxSpread = null; // Not applicable for < 2 shots
-        }
-
-        // --- Calculate Angular Measurements (MOA/MRAD) ---
+            g.maxSpread = Math.sqrt(maxDistSq); // Store in referenceUnit
+        } else g.maxSpread = null;
+        // --- Calculate Angular Measurements ---
         if (targetDistance > 0) {
-            const distMM = convertLinearValue(
+            const distMeters = convertUnits(
                 targetDistance,
                 targetDistanceUnit,
-                "mm",
+                "meters",
             );
-            if (distMM > 0) {
-                // Mean Radius Angular
+            if (distMeters > 0) {
                 if (g.meanRadius !== null) {
-                    const radiusMM = convertLinearValue(
+                    // Mean Radius Angular
+                    const radiusMeters = convertUnits(
                         g.meanRadius,
                         referenceUnit,
-                        "mm",
+                        "meters",
                     );
-                    const angleRad = radiusMM / distMM; // Small angle approximation
-                    g.meanRadiusMOA = angleRad * RAD_TO_MOA;
-                    g.meanRadiusMRAD = angleRad * RAD_TO_MRAD;
+                    const angleRad = radiusMeters / distMeters; // Small angle approx
+                    g.meanRadiusMRAD = angleRad * 1000;
+                    g.meanRadiusMOA = moa.mrad2moa(g.meanRadiusMRAD);
                 }
-                // Max Spread Angular
                 if (g.maxSpread !== null) {
-                    const spreadMM = convertLinearValue(
+                    // Max Spread Angular
+                    const spreadMeters = convertUnits(
                         g.maxSpread,
                         referenceUnit,
-                        "mm",
+                        "meters",
                     );
-                    const angleRad = spreadMM / distMM; // Small angle approximation
-                    g.maxSpreadMOA = angleRad * RAD_TO_MOA;
-                    g.maxSpreadMRAD = angleRad * RAD_TO_MRAD;
+                    const angleRad = spreadMeters / distMeters;
+                    g.maxSpreadMRAD = angleRad * 1000;
+                    g.maxSpreadMOA = moa.mrad2moa(g.maxSpreadMRAD);
                 }
             }
-        } else {
-            // Clear angular results if distance is zero or invalid
-            g.meanRadiusMOA = null;
-            g.meanRadiusMRAD = null;
-            g.maxSpreadMOA = null;
-            g.maxSpreadMRAD = null;
-        }
-
-        // --- Calculate Offset from Aim Point ---
+        } // Else MOA/MRAD remain null
+        // --- Calculate Offset from Aim Point (in referenceUnit) ---
         if (g.aimingPointReal && g.centroidReal) {
-            const dx = g.centroidReal.x - g.aimingPointReal.x; // Centroid relative to Aim Point
+            // Both in referenceUnit
+            const dx = g.centroidReal.x - g.aimingPointReal.x;
             const dy = g.centroidReal.y - g.aimingPointReal.y;
-            const dist = Math.sqrt(dx * dx + dy * dy); // Offset distance
-
-            // Calculate angle (0 degrees = right, 90 = up, 180 = left, 270 = down)
-            let angleRad = Math.atan2(-dy, dx); // Use -dy because canvas Y increases downwards
-            if (angleRad < 0) angleRad += 2 * Math.PI; // Normalize to 0-2PI
-            const angleDeg = angleRad * (180 / Math.PI);
-
+            const dist = Math.sqrt(dx * dx + dy * dy); // Distance in referenceUnit
+            let angleRad = Math.atan2(-dy, dx);
+            if (angleRad < 0) angleRad += 2 * Math.PI;
             g.offsetFromAim = {
                 distance: dist,
-                angleDegrees: angleDeg,
+                angleDegrees: angleRad * (180 / Math.PI),
             };
-        } else {
-            g.offsetFromAim = null; // No aim point set
-        }
-
-        g.resultsValid = true; // Mark results as valid
-        groups = groups; // Trigger reactivity
-        redrawCanvas(); // Redraw to display updated results
+        } else g.offsetFromAim = null;
+        g.resultsValid = true;
+        groups = groups;
+        redrawCanvas();
     }
-
+    // --- invalidateResults  ---
     function invalidateResults(idx: number) {
         if (idx >= 0 && idx < groups.length && groups[idx].resultsValid) {
             groups[idx].resultsValid = false;
-            groups = groups; // Trigger reactivity
-            // Optionally clear specific fields if needed, but calculateGroupResults handles reset
+            groups = groups;
         }
     }
 
-    // --- Group Management ---
+    // --- Group Management  ---
     function addNewGroup() {
         const nG: ShotGroup = {
             id: nextGroupId++,
@@ -1345,35 +1306,25 @@
             infoBoxSize: null,
         };
         groups = [...groups, nG];
-        activeGroupIndex = groups.length - 1; // Switch to the new group
-        selectedHoleIndex = null; // Deselect any holes
-
-        // Set mode based on current state
-        if (!imageBitmap)
-            mode = "loading"; // Should not happen if called after load, but safe check
+        activeGroupIndex = groups.length - 1;
+        selectedHoleIndex = null;
+        if (!imageBitmap) mode = "loading";
         else if (!scale) mode = "scaling";
         else mode = "placingHoles";
-
-        redrawCanvas(); // Redraw to show the new group (likely empty)
+        redrawCanvas();
     }
-
     function switchToGroup(idx: number) {
         if (idx >= 0 && idx < groups.length && idx !== activeGroupIndex) {
             activeGroupIndex = idx;
-            selectedHoleIndex = null; // Deselect hole when switching group
-
-            // Set mode based on current state for the switched-to group
+            selectedHoleIndex = null;
             if (!imageBitmap) mode = "loading";
             else if (!scale) mode = "scaling";
-            else mode = "placingHoles"; // Default interaction mode when switching
-
-            redrawCanvas(); // Redraw to highlight the active group
+            else mode = "placingHoles";
+            redrawCanvas();
         }
     }
-
     async function deleteGroup(idx: number) {
-        if (idx < 0 || idx >= groups.length) return; // Invalid index
-
+        if (idx < 0 || idx >= groups.length) return;
         const gName = groups[idx]?.name ?? `Group ${idx + 1}`;
         if (
             !confirm(
@@ -1381,116 +1332,95 @@
             )
         )
             return;
-
-        groups.splice(idx, 1); // Remove the group
-
+        groups.splice(idx, 1);
         if (groups.length === 0) {
-            // If last group was deleted, add a new one
-            activeGroupIndex = -1; // Reset index before adding
-            addNewGroup(); // This will set activeGroupIndex to 0
+            activeGroupIndex = -1;
+            addNewGroup();
         } else {
-            // Adjust active index if necessary
-            if (activeGroupIndex === idx) {
-                // If deleted group was active, activate the previous one (or first one)
+            if (activeGroupIndex === idx)
                 activeGroupIndex = Math.max(0, idx - 1);
-            } else if (activeGroupIndex > idx) {
-                // If deleted group was before the active one, decrement active index
-                activeGroupIndex--;
-            }
-            // Ensure active index is valid after potential adjustments
-            if (activeGroupIndex >= groups.length) {
+            else if (activeGroupIndex > idx) activeGroupIndex--;
+            if (activeGroupIndex >= groups.length)
                 activeGroupIndex = groups.length - 1;
-            }
-
-            groups = groups; // Trigger reactivity
-            await tick(); // Wait for Svelte update
-            // No need to call switchToGroup, just update index and redraw
+            groups = groups;
+            await tick();
             redrawCanvas();
         }
     }
 
-    // --- Point Deletion ---
+    // --- Point Deletion  ---
     async function deleteSelectedHole() {
-        if (activeGroupIndex === -1 || selectedHoleIndex === null) return; // Nothing selected
-
+        if (activeGroupIndex === -1 || selectedHoleIndex === null) return;
         const g = groups[activeGroupIndex];
-        // Double-check index validity before splicing
         if (
             selectedHoleIndex < 0 ||
             selectedHoleIndex >= g.bulletHolesPixels.length
         ) {
-            selectedHoleIndex = null; // Invalid index, just deselect
+            selectedHoleIndex = null;
             return;
         }
-
-        // Remove the hole from both pixel and real arrays
         g.bulletHolesPixels.splice(selectedHoleIndex, 1);
         g.bulletHolesReal.splice(selectedHoleIndex, 1);
-
-        selectedHoleIndex = null; // Deselect after deletion
-        invalidateResults(activeGroupIndex); // Mark results as needing update
-        groups = groups; // Trigger reactivity
-
-        await tick(); // Wait for Svelte update
-        calculateGroupResults(activeGroupIndex); // Recalculate results
-        redrawCanvas(); // Redraw the canvas
+        selectedHoleIndex = null;
+        invalidateResults(activeGroupIndex);
+        groups = groups;
+        await tick();
+        calculateGroupResults(activeGroupIndex);
+        redrawCanvas();
     }
 
-    // --- Nudging ---
-    // <<< Updated clamping to use imageBitmap >>>
+    // --- Nudging  ---
     async function nudgeSelectedHolePx(dxI: number, dyI: number) {
         if (
-            scale && // Need scale for real coords update
+            scale &&
             activeGroupIndex !== -1 &&
             selectedHoleIndex !== null &&
+            selectedHoleIndex >= 0 &&
             selectedHoleIndex <
-                groups[activeGroupIndex].bulletHolesPixels.length // Check valid index
+                groups[activeGroupIndex].bulletHolesPixels.length
         ) {
             const g = groups[activeGroupIndex];
             const hPx = g.bulletHolesPixels[selectedHoleIndex];
-
-            // Update pixel coordinates
             hPx.x += dxI;
             hPx.y += dyI;
-
-            // Clamp pixel coordinates to image bounds
             if (imageBitmap) {
-                // Check if bitmap exists
-                hPx.x = Math.max(0, Math.min(hPx.x, imageBitmap.width)); // Use bitmap width
-                hPx.y = Math.max(0, Math.min(hPx.y, imageBitmap.height)); // Use bitmap height
+                hPx.x = Math.max(0, Math.min(hPx.x, imageBitmap.width));
+                hPx.y = Math.max(0, Math.min(hPx.y, imageBitmap.height));
             }
-
-            // Update corresponding real coordinates
-            const hRl = g.bulletHolesReal[selectedHoleIndex];
-            hRl.x = hPx.x / scale;
-            hRl.y = hPx.y / scale;
-
-            invalidateResults(activeGroupIndex); // Mark results as needing update
-            groups = groups; // Trigger reactivity
-
-            await tick(); // Wait for Svelte update
-            calculateGroupResults(activeGroupIndex); // Recalculate results
-            redrawCanvas(); // Redraw canvas
+            if (selectedHoleIndex < g.bulletHolesReal.length) {
+                const hRl = g.bulletHolesReal[selectedHoleIndex];
+                hRl.x = hPx.x / scale;
+                hRl.y = hPx.y / scale;
+            }
+            invalidateResults(activeGroupIndex);
+            groups = groups;
+            await tick();
+            calculateGroupResults(activeGroupIndex);
+            redrawCanvas();
         }
     }
 
-    // --- Zoom Controls ---
-    // <<< Updated check to use imageBitmap >>>
+    // --- Zoom Controls  ---
     function zoom(factor: number, cX?: number, cY?: number) {
-        if (!imageBitmap || !canvasElement || !lastViewport) return; // Need bitmap, canvas, viewport
-
+        if (
+            !imageBitmap ||
+            !canvasElement ||
+            !lastViewport ||
+            !canvasElement.clientWidth ||
+            !canvasElement.clientHeight ||
+            canvasElement.clientWidth <= 0 ||
+            canvasElement.clientHeight <= 0
+        )
+            return;
         const currentScale = viewScale;
-        const newScale = Math.max(
+        let newScale = Math.max(
             MIN_ZOOM,
             Math.min(MAX_ZOOM, currentScale * factor),
         );
-
-        if (newScale === currentScale) return; // No change
-
-        let zoomCenterX = viewCenter.x; // Default to current view center
+        if (newScale < fitScaleValue) newScale = fitScaleValue;
+        if (newScale === currentScale) return;
+        let zoomCenterX = viewCenter.x;
         let zoomCenterY = viewCenter.y;
-
-        // If client coordinates are provided (e.g., from mouse wheel), zoom towards that point
         if (cX !== undefined && cY !== undefined) {
             const displayCoords = getCanvasDisplayCoords({
                 clientX: cX,
@@ -1504,31 +1434,22 @@
                 }
             }
         }
-
-        // Adjust view center based on zoom point and scale change
-        // Formula: newCenter = zoomPoint - (zoomPoint - oldCenter) * (oldScale / newScale)
         viewCenter.x =
             zoomCenterX -
             (zoomCenterX - viewCenter.x) * (currentScale / newScale);
         viewCenter.y =
             zoomCenterY -
             (zoomCenterY - viewCenter.y) * (currentScale / newScale);
-
-        viewScale = newScale; // Apply the new scale
-
-        clampViewCenter(); // Ensure the new view center is valid
-        redrawCanvas(); // Redraw with the new scale and center
+        viewScale = newScale;
+        clampViewCenter();
+        redrawCanvas();
     }
-
     function zoomIn(e?: MouseEvent) {
         zoom(ZOOM_FACTOR, e?.clientX, e?.clientY);
     }
-
     function zoomOut(e?: MouseEvent) {
         zoom(1 / ZOOM_FACTOR, e?.clientX, e?.clientY);
     }
-
-    // <<< Updated to use imageBitmap >>>
     function resetZoomToFit() {
         if (
             !imageBitmap ||
@@ -1536,114 +1457,82 @@
             !canvasElement.clientWidth ||
             !canvasElement.clientHeight
         )
-            return; // Need bitmap and display size
-
+            return;
         const imgW = imageBitmap.width;
         const imgH = imageBitmap.height;
         const displayW = canvasElement.clientWidth;
         const displayH = canvasElement.clientHeight;
-
-        let fitScale = 1.0; // Default to 100%
-
-        // Calculate scale to fit image within display area
-        if (imgW > 0 && imgH > 0 && displayW > 0 && displayH > 0) {
-            fitScale = Math.min(displayW / imgW, displayH / imgH);
-        }
-
-        // Apply the fit scale, respecting min/max zoom limits
-        viewScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale));
-        // Center the view on the image
+        fitScaleValue = 1.0;
+        if (imgW > 0 && imgH > 0 && displayW > 0 && displayH > 0)
+            fitScaleValue = Math.min(displayW / imgW, displayH / imgH);
+        else fitScaleValue = MIN_ZOOM;
+        fitScaleValue = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScaleValue));
+        viewScale = fitScaleValue;
         viewCenter = { x: imgW / 2, y: imgH / 2 };
-
-        clampViewCenter(); // Clamp center after scale change
-        // No redraw needed here, caller (setupCanvas or resetZoom button) will redraw
+        clampViewCenter();
     }
-
     function resetZoom() {
         if (!imageBitmap) return;
         resetZoomToFit();
-        redrawCanvas(); // Explicitly redraw after reset button click
+        redrawCanvas();
     }
-
     function handleWheel(e: WheelEvent) {
-        e.preventDefault(); // Prevent page scrolling
-        const delta = -Math.sign(e.deltaY); // Normalize wheel direction (-1 or 1)
+        e.preventDefault();
+        const delta = -Math.sign(e.deltaY);
         const factor = delta > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
-        zoom(factor, e.clientX, e.clientY); // Zoom towards cursor position
+        zoom(factor, e.clientX, e.clientY);
     }
 
-    // --- Scale Controls ---
+    // --- Scale Controls  ---
     function enterScaleMode() {
         mode = "scaling";
-        refLineStart = null; // Clear existing line
+        refLineStart = null;
         refLineEnd = null;
         isDrawingRefLine = false;
-        selectedHoleIndex = null; // Deselect any hole
-        redrawCanvas(); // Redraw to reflect mode change
+        selectedHoleIndex = null;
+        redrawCanvas();
     }
 
-    // --- View Clamping ---
-    // <<< Updated to use imageBitmap >>>
+    // --- View Clamping  ---
     function clampViewCenter() {
         if (
             !imageBitmap ||
             !canvasElement ||
             !canvasElement.clientWidth ||
-            !canvasElement.clientHeight
+            !canvasElement.clientHeight ||
+            viewScale <= 0
         )
-            return; // Need bitmap and display size
-
+            return;
         const imgW = imageBitmap.width;
         const imgH = imageBitmap.height;
-
-        // Calculate the size of the viewport in image pixels
         const viewportWidthImg = canvasElement.clientWidth / viewScale;
         const viewportHeightImg = canvasElement.clientHeight / viewScale;
-
-        // Calculate min/max allowed center coordinates
         const minX = viewportWidthImg / 2;
         const maxX = imgW - viewportWidthImg / 2;
         const minY = viewportHeightImg / 2;
         const maxY = imgH - viewportHeightImg / 2;
-
-        // Clamp X coordinate if image is wider than viewport
-        if (imgW > viewportWidthImg) {
+        if (maxX >= minX)
             viewCenter.x = Math.max(minX, Math.min(viewCenter.x, maxX));
-        } else {
-            // If image is narrower than viewport, center it
-            viewCenter.x = imgW / 2;
-        }
-
-        // Clamp Y coordinate if image is taller than viewport
-        if (imgH > viewportHeightImg) {
+        else viewCenter.x = imgW / 2;
+        if (maxY >= minY)
             viewCenter.y = Math.max(minY, Math.min(viewCenter.y, maxY));
-        } else {
-            // If image is shorter than viewport, center it
-            viewCenter.y = imgH / 2;
-        }
+        else viewCenter.y = imgH / 2;
     }
 
-    // --- Utility ---
-    // <<< Updated to include imageBitmap reset >>>
+    // --- Utility  ---
     function resetStateForNewImage() {
-        // Image and scale related
         scale = null;
         refLineStart = null;
         refLineEnd = null;
         isDrawingRefLine = false;
         if (imageBitmap) {
-            // Close existing bitmap
             imageBitmap.close();
             imageBitmap = null;
         }
-
-        // Group related
         groups = [];
         activeGroupIndex = -1;
         nextGroupId = 0;
         selectedHoleIndex = null;
-
-        // Interaction states
         isDraggingInfoBox = false;
         draggingGroupIndex = null;
         dragStartPointerCoords = null;
@@ -1652,15 +1541,12 @@
         isPanning = false;
         panStartPointerCoords = null;
         panStartViewCenter = null;
-
-        // Viewport related
         viewScale = 1.0;
-        viewCenter = { x: 0, y: 0 }; // Will be reset in setupCanvas
+        viewCenter = { x: 0, y: 0 };
         lastViewport = null;
-
-        mode = "loading"; // Set initial mode
+        mode = "loading";
+        fitScaleValue = 1.0;
     }
-
     function reset() {
         if (
             !confirm(
@@ -1668,81 +1554,45 @@
             )
         )
             return;
-
-        resetStateForNewImage(); // Reset all internal state
-
-        // Clear canvas visually
-        if (ctx && canvasElement) {
+        resetStateForNewImage();
+        if (ctx && canvasElement)
             ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            // Optionally reset canvas dimensions? Maybe not needed if new image loads.
-            // canvasElement.width = 0;
-            // canvasElement.height = 0;
-        }
-
-        // Clear file input and URL references
-        if (imageUrl && imageUrl.startsWith("blob:")) {
+        if (imageUrl && imageUrl.startsWith("blob:"))
             URL.revokeObjectURL(imageUrl);
-        }
         imageFile = null;
         imageUrl = null;
-        // imageBitmap is cleared in resetStateForNewImage
-
-        ctx = null; // Release context reference
-
-        if (fileInputEl) fileInputEl.value = ""; // Clear the file input field
+        ctx = null;
+        if (fileInputEl) fileInputEl.value = "";
     }
 
-    // --- Input Handlers ---
+    // --- Input Handlers (Unchanged logic, rely on redraw/recalculate) ---
     function handleDiameterChange() {
-        // Only redraw if scale is set (meaning holes are potentially visible)
         if (scale) redrawCanvas();
     }
-
     function handleResultUnitChange() {
-        // Redraw if any group has results displayed
         if (groups.some((g) => g.resultsValid)) redrawCanvas();
     }
-
     function handleAngularUnitChange() {
-        // Redraw if any group has results displayed (as angular units might change)
         if (groups.some((g) => g.resultsValid)) redrawCanvas();
     }
-
     function handleTargetDistanceChange() {
-        // Recalculate results for all groups if distance is valid
-        if (targetDistance >= 0) {
-            groups.forEach((_, i) => calculateGroupResults(i)); // This will redraw
-        } else {
-            // If distance becomes invalid, clear angular results but keep linear ones
-            groups.forEach((g) => {
-                g.maxSpreadMOA = null;
-                g.maxSpreadMRAD = null;
-                g.meanRadiusMOA = null;
-                g.meanRadiusMRAD = null;
-                // Keep g.resultsValid = true if linear results exist
-            });
-            groups = groups; // Trigger reactivity
-            redrawCanvas(); // Redraw to update info boxes
-        }
+        groups.forEach((_, i) => calculateGroupResults(i));
     }
-
     function handleReferenceInputChange() {
-        // If a reference line exists, try recalculating scale
-        if (refLineStart && refLineEnd) {
-            calculateScale(); // This recalculates results and redraws
-        } else {
-            // If no ref line, changing inputs invalidates scale and results
+        if (refLineStart && refLineEnd)
+            calculateScale(); // Tries to recalculate scale, results, redraws
+        else {
+            // Invalidate scale if no line exists
             scale = null;
-            mode = "scaling"; // Force user to redraw ref line
+            mode = "scaling";
             groups.forEach((g, i) => {
                 invalidateResults(i);
-                g.infoBoxAnchorImage = null; // Reset info box position
+                g.infoBoxAnchorImage = null;
             });
-            groups = groups; // Trigger reactivity
-            redrawCanvas(); // Redraw to clear results/overlays
+            groups = groups;
+            redrawCanvas();
         }
     }
-
     function isPointInRect(p: Point, r: Rect): boolean {
         return (
             p.x >= r.x &&
@@ -1752,49 +1602,36 @@
         );
     }
 
-    // --- Export Canvas Function ---
-    // <<< Updated to use imageBitmap >>>
+    // --- exportCanvasAsJpeg (Using 'convertUnits' and moa.mrad2moa) ---
     function exportCanvasAsJpeg(): void {
-        // <<< Check imageBitmap >>>
-        if (!canvasElement || !imageBitmap || !ctx) {
-            alert("Canvas or image data is not ready for export.");
+        if (!canvasElement || !imageBitmap || !ctx || !scale) {
+            alert("Canvas/image/scale not ready.");
             return;
         }
-
-        // Create a new canvas matching the original image dimensions
         const exportCanvas = document.createElement("canvas");
-        exportCanvas.width = imageBitmap.width; // Use bitmap dimensions
-        exportCanvas.height = imageBitmap.height; // Use bitmap dimensions
-
+        exportCanvas.width = imageBitmap.width;
+        exportCanvas.height = imageBitmap.height;
         const exportCtx = exportCanvas.getContext("2d");
         if (!exportCtx) {
-            alert("Failed to create export canvas context.");
+            alert("Failed context.");
             return;
         }
-
-        // Setup export canvas context
-        exportCtx.imageSmoothingEnabled = false; // Consistent with display
-        exportCtx.fillStyle = "#FFFFFF"; // Set white background for JPEG
+        exportCtx.imageSmoothingEnabled = true;
+        exportCtx.fillStyle = "#FFFFFF";
         exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-
-        // Draw the original image bitmap onto the export canvas
         exportCtx.drawImage(imageBitmap, 0, 0);
-
-        // --- Draw Overlays (Scaling Line, Groups, Info Boxes) ---
-        // Use image coordinates directly, no DPR scaling needed for export
-        exportCtx.save();
-
-        // --- Draw Scaling Line (Export) ---
+        exportCtx.save(); // Save before overlays
+        // Draw Scaling Line
         if (refLineStart && refLineEnd) {
             exportCtx.beginPath();
             exportCtx.moveTo(refLineStart.x, refLineStart.y);
             exportCtx.lineTo(refLineEnd.x, refLineEnd.y);
             exportCtx.strokeStyle = scaleLineColor;
-            exportCtx.lineWidth = scaleLineWidth; // Use base width, no dpr
+            exportCtx.lineWidth = scaleLineWidth;
             exportCtx.setLineDash([]);
             exportCtx.stroke();
             exportCtx.fillStyle = scaleLineColor;
-            const mSize = scaleMarkerSize; // Use base size, no dpr
+            const mSize = scaleMarkerSize;
             exportCtx.fillRect(
                 refLineStart.x - mSize / 2,
                 refLineStart.y - mSize / 2,
@@ -1808,19 +1645,16 @@
                 mSize,
             );
         }
-
-        // --- Draw Group Elements (Export) ---
-        if (scale) {
+        // Draw Group Elements
+        if (scale)
             groups.forEach((group, index) => {
-                const isActive = index === activeGroupIndex; // Use for color selection
-                const dUnit = convertLinearValue(
+                const isActive = index === activeGroupIndex;
+                const bulletDiameterInRefUnit = convertUnits(
                     bulletDiameter,
                     bulletDiameterUnit,
                     referenceUnit,
                 );
-                const bRadiusImg = (dUnit / 2) * scale!; // Bullet radius in image pixels
-
-                // Colors (use active/inactive from state)
+                const bRadiusImg = (bulletDiameterInRefUnit / 2) * scale!;
                 const hColor = isActive
                     ? bulletHoleColor
                     : inactiveBulletHoleColor;
@@ -1831,11 +1665,8 @@
                     ? aimPointColor
                     : "rgba(255,133,27,0.7)";
                 const offColor = offsetLineColor;
-
-                // Line width (use base width from state, no dpr)
                 const lWidth = lineWidthBase;
-
-                // Draw Bullet Holes
+                // Draw Holes
                 exportCtx.strokeStyle = hColor;
                 exportCtx.lineWidth = lWidth;
                 group.bulletHolesPixels.forEach((holeImg: Point) => {
@@ -1849,22 +1680,19 @@
                     );
                     exportCtx.stroke();
                 });
-
-                // Get Centroid and Aim Point in Image Pixels
+                // Get Centroid/Aim in Image Pixels
                 let cenImgPx: Point | null = null;
-                let aimImgPx: Point | null = group.aimingPointPixels; // Already in image pixels
-                if (group.resultsValid && group.centroidReal) {
+                let aimImgPx: Point | null = group.aimingPointPixels;
+                if (group.resultsValid && group.centroidReal)
                     cenImgPx = {
                         x: group.centroidReal.x * scale!,
                         y: group.centroidReal.y * scale!,
                     };
-                }
-
-                // Draw Centroid Marker
+                // Draw Centroid
                 if (cenImgPx) {
                     exportCtx.strokeStyle = cenColor;
                     exportCtx.lineWidth = lWidth;
-                    const cs = 6; // Fixed size for export? Or use state var?
+                    const cs = 6;
                     exportCtx.beginPath();
                     exportCtx.moveTo(cenImgPx.x - cs, cenImgPx.y);
                     exportCtx.lineTo(cenImgPx.x + cs, cenImgPx.y);
@@ -1872,13 +1700,12 @@
                     exportCtx.lineTo(cenImgPx.x, cenImgPx.y + cs);
                     exportCtx.stroke();
                 }
-
-                // Draw Aim Point Marker and Offset Line
+                // Draw Aim Point & Offset Line
                 if (aimImgPx) {
                     exportCtx.strokeStyle = aimColor;
                     exportCtx.lineWidth = lWidth;
-                    exportCtx.setLineDash([3, 3]); // Fixed dash for export?
-                    const cs = 8; // Fixed size for export?
+                    exportCtx.setLineDash([3, 3]);
+                    const cs = 8;
                     exportCtx.beginPath();
                     exportCtx.moveTo(aimImgPx.x - cs, aimImgPx.y);
                     exportCtx.lineTo(aimImgPx.x + cs, aimImgPx.y);
@@ -1886,13 +1713,11 @@
                     exportCtx.lineTo(aimImgPx.x, aimImgPx.y + cs);
                     exportCtx.stroke();
                     exportCtx.setLineDash([]);
-
-                    // Draw Offset Line if Centroid exists
                     if (cenImgPx) {
                         exportCtx.strokeStyle = offColor;
                         exportCtx.lineWidth =
-                            lWidth * offsetLineWidthMultiplier; // Use multiplier
-                        exportCtx.setLineDash([4, 4]); // Fixed dash for export?
+                            lWidth * offsetLineWidthMultiplier;
+                        exportCtx.setLineDash([4, 4]);
                         exportCtx.beginPath();
                         exportCtx.moveTo(aimImgPx.x, aimImgPx.y);
                         exportCtx.lineTo(cenImgPx.x, cenImgPx.y);
@@ -1900,25 +1725,24 @@
                         exportCtx.setLineDash([]);
                     }
                 }
-
-                // --- Draw Info Box (Export) ---
+                // Draw Info Box
                 if (
                     group.resultsValid &&
                     group.infoBoxAnchorImage &&
                     group.infoBoxSize
                 ) {
-                    // Regenerate text lines (same logic as drawInfoBox)
                     const lines: string[] = [];
                     lines.push(
                         `${group.name} (${group.bulletHolesReal.length} shots)`,
                     );
                     if (group.maxSpread !== null) {
-                        const d = convertLinearValue(
+                        // Spread
+                        const d = convertUnits(
                             group.maxSpread,
                             referenceUnit,
                             resultDisplayUnit,
                         );
-                        let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit}`;
+                        let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
                         if (
                             angularUnitDisplay === "moa" &&
                             group.maxSpreadMOA !== null
@@ -1930,14 +1754,16 @@
                         )
                             l += ` (${group.maxSpreadMRAD.toFixed(2)} MRAD)`;
                         lines.push(l);
-                    }
+                    } else if (group.bulletHolesReal.length < 2)
+                        lines.push(`Spread: N/A (<2 shots)`);
                     if (group.meanRadius !== null) {
-                        const d = convertLinearValue(
+                        // Mean Radius
+                        const d = convertUnits(
                             group.meanRadius,
                             referenceUnit,
                             resultDisplayUnit,
                         );
-                        let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit}`;
+                        let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
                         if (
                             angularUnitDisplay === "moa" &&
                             group.meanRadiusMOA !== null
@@ -1951,22 +1777,19 @@
                         lines.push(l);
                     }
                     if (group.offsetFromAim !== null) {
-                        const d = convertLinearValue(
+                        // Offset
+                        const d = convertUnits(
                             group.offsetFromAim.distance,
                             referenceUnit,
                             resultDisplayUnit,
                         );
                         lines.push(
-                            `Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
+                            `Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
                         );
                     }
-
-                    // Use stored size (logical pixels)
                     const { width: boxW, height: boxH } = group.infoBoxSize;
-                    let infoX = group.infoBoxAnchorImage.x; // Anchor is in image pixels
+                    let infoX = group.infoBoxAnchorImage.x;
                     let infoY = group.infoBoxAnchorImage.y;
-
-                    // Clamp position to export canvas bounds
                     infoX = Math.max(
                         0,
                         Math.min(infoX, exportCanvas.width - boxW),
@@ -1975,8 +1798,6 @@
                         0,
                         Math.min(infoY, exportCanvas.height - boxH),
                     );
-
-                    // Style variables (no dpr needed)
                     const fSize = legendFontSize;
                     const pad = 4;
                     const lH = fSize * 1.2;
@@ -1985,42 +1806,35 @@
                         : legendBgColor;
                     const LborderColor = legendBorderColor;
                     const LtextColor = legendTextColor;
-
-                    // Draw box
                     exportCtx.fillStyle = bgColorWithAlpha;
                     exportCtx.strokeStyle = LborderColor;
-                    exportCtx.lineWidth = 1; // Fixed border width for export
+                    exportCtx.lineWidth = 1;
                     exportCtx.fillRect(infoX, infoY, boxW, boxH);
                     exportCtx.strokeRect(infoX, infoY, boxW, boxH);
-
-                    // Draw text
                     exportCtx.fillStyle = LtextColor;
-                    exportCtx.font = `${fSize}px sans-serif`; // Use base font size
+                    exportCtx.font = `${fSize}px sans-serif`;
                     exportCtx.textAlign = "left";
                     exportCtx.textBaseline = "top";
-                    lines.forEach((line, i) => {
+                    lines.forEach((line, i) =>
                         exportCtx.fillText(
                             line,
                             infoX + pad,
                             infoY + pad + i * lH,
-                        );
-                    });
+                        ),
+                    );
                 }
             });
-        }
-        exportCtx.restore(); // Restore context after drawing overlays
-
-        // --- Generate Data URL and Trigger Download ---
+        exportCtx.restore(); // Restore after overlays
+        // Generate Data URL and Download
         try {
-            const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9); // Quality = 0.9
+            const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
             const link = document.createElement("a");
-            // Generate filename (use original filename if available)
             const baseName =
                 imageFile?.name.replace(/\.[^/.]+$/, "") ?? "target-analysis";
             link.download = `${baseName}.jpg`;
             link.href = dataUrl;
-            link.click(); // Simulate click to trigger download
-            link.remove(); // Clean up the link element
+            link.click();
+            link.remove();
         } catch (error) {
             console.error("Error exporting canvas:", error);
             alert("Failed to export image as JPEG.");
@@ -2041,34 +1855,41 @@
             : mode === "scaling"
               ? "crosshair"
               : mode === "placingHoles"
-                ? "copy" // Or your preferred cursor for adding points
+                ? "copy"
                 : mode === "placingAim"
                   ? "crosshair"
                   : mode === "selectingHole"
                     ? "pointer"
                     : "default";
-
-    // Reactive calculation for canvas aspect ratio display
-    $: canvasAspectRatio = imageBitmap
-        ? imageBitmap.width / imageBitmap.height
-        : 16 / 9; // Default aspect ratio
 </script>
 
-<div class="container">
-    <div class="main-layout">
-        <div class="canvas-column">
-            <div class="controls-section">
-                <div class="controls">
-                    <label for="fileInput">🖼️ Image:</label>
+<div
+    class="flex flex-col items-center font-sans p-0 bg-base-200 text-base-content w-[calc(100vw-2.5em)] h-[calc(100vh-4em)] overflow-x-hidden"
+>
+    <div
+        class="flex flex-col lg:flex-row w-full p-2 lg:p-4 gap-3 lg:gap-4 flex-grow min-h-0"
+    >
+        <div
+            class="flex flex-col gap-2 lg:gap-3 lg:flex-[3] lg:order-1 lg:h-full min-h-0 w-full"
+        >
+            <div class="card bg-base-100 shadow-md p-3">
+                <div
+                    class="flex flex-wrap gap-2 items-center justify-center sm:justify-start"
+                >
+                    <label
+                        for="fileInput"
+                        class="label text-sm font-medium mr-1">🖼️ Image:</label
+                    >
                     <input
                         bind:this={fileInputEl}
                         type="file"
                         id="fileInput"
                         accept="image/*"
                         on:change={handleFileSelect}
+                        class="file-input file-input-bordered file-input-sm w-full max-w-xs flex-grow"
                     />
                     <button
-                        class="danger micro"
+                        class="btn btn-error btn-sm"
                         on:click={reset}
                         title="Reset all data & image">Reset All</button
                     >
@@ -2076,59 +1897,83 @@
             </div>
 
             {#if imageUrl}
-                <div class="interaction-controls">
-                    <div class="zoom-pan-save">
+                <div
+                    class="card bg-base-100 shadow-md p-2 lg:p-3 flex flex-col lg:flex-row lg:flex-wrap gap-2 lg:items-center"
+                >
+                    <div
+                        class="flex gap-1 items-center flex-wrap justify-center lg:justify-start"
+                    >
                         <button
+                            class="btn btn-primary btn-sm lg:order-last lg:ml-4"
                             on:click={exportCanvasAsJpeg}
                             title="Save full image + overlays as JPG"
-                            class="save-button"
                             disabled={!imageBitmap}
                         >
                             💾 Save JPG
                         </button>
                         <button
+                            class="btn btn-secondary btn-sm btn-square"
                             on:click={zoomIn}
-                            disabled={viewScale >= MAX_ZOOM || !imageBitmap}
+                            disabled={!imageBitmap || viewScale >= MAX_ZOOM}
                             title="Zoom In (+Wheel Up)">➕</button
                         >
-                        <span class="zoom-level" title="Current Zoom Level"
+                        <span
+                            class="text-xs text-base-content/70 mx-1 whitespace-nowrap w-8"
+                            title="Current Zoom Level"
                             >{Math.round(viewScale * 100)}%</span
                         >
                         <button
+                            class="btn btn-secondary btn-sm btn-square"
                             on:click={zoomOut}
-                            disabled={viewScale <= MIN_ZOOM || !imageBitmap}
+                            disabled={!imageBitmap ||
+                                viewScale <= fitScaleValue}
                             title="Zoom Out (+Wheel Down)">➖</button
                         >
                         <button
+                            class="btn btn-secondary btn-sm"
                             on:click={resetZoom}
                             disabled={!imageBitmap}
                             title="Fit Zoom & Reset Pan">🔍 Fit</button
                         >
                     </div>
-                    <div class="controls scale-mode-controls">
-                        <label for="refLength">Ref Len:</label>
-                        <input
-                            type="number"
-                            id="refLength"
-                            bind:value={referenceLength}
-                            min="1"
-                            step="1"
-                            on:input={handleReferenceInputChange}
-                            disabled={!imageBitmap}
-                            style:width="60px"
-                        />
-                        <select
-                            bind:value={referenceUnit}
-                            on:change={handleReferenceInputChange}
-                            disabled={!imageBitmap}
-                        >
-                            <option value="inches">in</option>
-                            <option value="cm">cm</option>
-                            <option value="mm">mm</option>
-                        </select>
+
+                    <div
+                        class="border-t border-dashed border-base-300 pt-2 mt-2 lg:hidden"
+                    ></div>
+
+                    <div
+                        class="flex flex-wrap gap-x-3 gap-y-2 items-center justify-center lg:justify-start lg:flex-grow lg:border-l lg:border-dashed lg:border-base-300 lg:pl-4"
+                    >
+                        <div class="flex items-center gap-1">
+                            <label
+                                for="refLength"
+                                class="label text-xs font-medium whitespace-nowrap"
+                                >Ref Len:</label
+                            >
+                            <input
+                                type="number"
+                                id="refLength"
+                                bind:value={referenceLength}
+                                min="0.001"
+                                step="any"
+                                on:input={handleReferenceInputChange}
+                                disabled={!imageBitmap}
+                                class="input input-bordered input-xs w-16 text-center"
+                            />
+                            <select
+                                bind:value={referenceUnit}
+                                on:change={handleReferenceInputChange}
+                                disabled={!imageBitmap}
+                                class="select select-bordered select-xs"
+                            >
+                                <option value="inches">in</option>
+                                <option value="cm">cm</option>
+                                <option value="mm">mm</option>
+                            </select>
+                        </div>
                         <button
-                            class="secondary"
-                            class:active={mode === "scaling"}
+                            class="btn btn-secondary btn-sm"
+                            class:btn-active={mode === "scaling"}
                             on:click={enterScaleMode}
                             title={mode === "scaling"
                                 ? "Click-drag on image to draw reference line"
@@ -2138,9 +1983,11 @@
                             📏 {#if mode === "scaling"}Drawing Ref...{:else}Draw
                                 Ref Line{/if}
                         </button>
-                        <div class="mode-buttons">
+
+                        <div class="btn-group ml-auto">
                             <button
-                                class:active={mode === "panning"}
+                                class="btn btn-sm"
+                                class:btn-active={mode === "panning"}
                                 on:click={() => {
                                     mode =
                                         mode === "panning"
@@ -2157,7 +2004,8 @@
                                 🤚 Pan
                             </button>
                             <button
-                                class:active={mode === "placingHoles"}
+                                class="btn btn-sm"
+                                class:btn-active={mode === "placingHoles"}
                                 on:click={() => {
                                     mode = "placingHoles";
                                     selectedHoleIndex = null;
@@ -2169,7 +2017,8 @@
                                 ⭕ Holes
                             </button>
                             <button
-                                class:active={mode === "placingAim"}
+                                class="btn btn-sm"
+                                class:btn-active={mode === "placingAim"}
                                 on:click={() => {
                                     mode = "placingAim";
                                     selectedHoleIndex = null;
@@ -2181,7 +2030,8 @@
                                 🎯 Aim Pt
                             </button>
                             <button
-                                class:active={mode === "selectingHole"}
+                                class="btn btn-sm"
+                                class:btn-active={mode === "selectingHole"}
                                 on:click={() => {
                                     mode = "selectingHole";
                                     redrawCanvas();
@@ -2195,9 +2045,11 @@
                     </div>
                 </div>
 
-                <div class="canvas-area-wrapper">
+                <div
+                    class="relative w-full flex-grow flex justify-center items-center overflow-hidden min-h-[400px] lg:min-h-0 max-h-[70vh] lg:max-h-full"
+                >
                     <div
-                        class="canvas-area"
+                        class="w-full h-full overflow-hidden border border-base-300 bg-base-200 flex justify-center items-center"
                         on:wheel={handleWheel}
                         bind:this={canvasAreaElement}
                     >
@@ -2205,20 +2057,26 @@
                             bind:this={canvasElement}
                             on:pointerdown={handleCanvasPointerDown}
                             on:click={handleCanvasClick}
+                            class="block touch-none w-full h-full"
                             style:cursor={canvasCursor}
-                            style:max-width="100%"
-                            style:max-height="100%"
-                            style:aspect-ratio={canvasAspectRatio}
-                            style:width={imageBitmap ? "auto" : "100%"}
-                            style:height={imageBitmap ? "auto" : "auto"}
-                        ></canvas>
+                            style:image-rendering="smooth"
+                        >
+                        </canvas>
                     </div>
+
                     {#if mode === "selectingHole" && selectedHoleIndex !== null}
-                        <div class="nudge-overlay">
-                            <span>Nudge (Arrows):</span>
-                            <div class="nudge-grid">
+                        <div
+                            class="absolute top-2 left-2 z-10 card bg-base-100/80 backdrop-blur-sm shadow-lg p-2 border border-base-300"
+                        >
+                            <span
+                                class="text-xs text-center mb-1 text-base-content/80"
+                                >Nudge (Arrows):</span
+                            >
+                            <div
+                                class="grid grid-cols-3 gap-1 justify-center mb-1"
+                            >
                                 <button
-                                    class="nudge"
+                                    class="btn btn-warning btn-xs btn-square col-start-2 row-start-1"
                                     on:click={() =>
                                         handleKeyDown({
                                             key: "ArrowUp",
@@ -2227,7 +2085,7 @@
                                     title="Nudge Up">↑</button
                                 >
                                 <button
-                                    class="nudge"
+                                    class="btn btn-warning btn-xs btn-square col-start-1 row-start-2"
                                     on:click={() =>
                                         handleKeyDown({
                                             key: "ArrowLeft",
@@ -2236,7 +2094,7 @@
                                     title="Nudge Left">←</button
                                 >
                                 <button
-                                    class="nudge"
+                                    class="btn btn-warning btn-xs btn-square col-start-3 row-start-2"
                                     on:click={() =>
                                         handleKeyDown({
                                             key: "ArrowRight",
@@ -2245,7 +2103,7 @@
                                     title="Nudge Right">→</button
                                 >
                                 <button
-                                    class="nudge"
+                                    class="btn btn-warning btn-xs btn-square col-start-2 row-start-3"
                                     on:click={() =>
                                         handleKeyDown({
                                             key: "ArrowDown",
@@ -2254,9 +2112,9 @@
                                     title="Nudge Down">↓</button
                                 >
                             </div>
-                            <div class="nudge-actions">
+                            <div class="flex justify-center gap-2 w-full">
                                 <button
-                                    class="secondary micro"
+                                    class="btn btn-secondary btn-xs"
                                     on:click={() => {
                                         selectedHoleIndex = null;
                                         redrawCanvas();
@@ -2264,7 +2122,7 @@
                                     title="Deselect hole">Clear Sel.</button
                                 >
                                 <button
-                                    class="danger micro"
+                                    class="btn btn-error btn-xs"
                                     on:click={deleteSelectedHole}
                                     title="Delete selected hole (Del/Bksp)"
                                     >Delete Sel.</button
@@ -2274,76 +2132,138 @@
                     {/if}
                 </div>
             {:else if mode !== "loading"}
-                <div class="canvas-placeholder">
-                    <div class="instructions">
-                        Load an image to start analysis.
+                <div
+                    class="flex justify-center items-center flex-grow min-h-[200px] w-full bg-base-100 border border-dashed border-base-300 rounded-lg p-5"
+                >
+                    <div
+                        class="alert alert-info shadow-lg max-w-md text-center"
+                    >
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            class="stroke-current shrink-0 w-6 h-6"
+                            ><path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            ></path></svg
+                        >
+                        <span>Load an image to start analysis.</span>
                     </div>
                 </div>
             {/if}
         </div>
 
-        <div class="controls-column" bind:this={controlsColumnEl}>
+        <div
+            class="flex flex-col gap-3 lg:flex-1 lg:max-w-sm lg:order-2 lg:h-full lg:overflow-y-auto lg:pr-1 min-h-0 w-full"
+            bind:this={controlsColumnEl}
+        >
             {#if imageUrl}
-                <div class="controls-section">
-                    <h2>Settings & Groups</h2>
-                    <div class="controls settings-row">
-                        <div class="setting-item">
-                            <label for="targetDist">Tgt Dist:</label>
-                            <input
-                                type="number"
-                                id="targetDist"
-                                bind:value={targetDistance}
-                                min="0"
-                                step="any"
-                                on:input={handleTargetDistanceChange}
-                                title="Distance to target (set > 0 for MOA/MIL)"
-                                style:width="60px"
-                            />
-                            <select
-                                bind:value={targetDistanceUnit}
-                                on:change={handleTargetDistanceChange}
+                <div class="card bg-base-100 shadow-md p-3">
+                    <h2
+                        class="text-lg font-semibold mb-2 pb-1 border-b border-base-300 text-center"
+                    >
+                        Settings & Groups
+                    </h2>
+                    <div
+                        class="flex flex-col sm:flex-row md:flex-col flex-wrap gap-x-4 gap-y-3 mb-3 pb-3 border-b border-dashed border-base-300"
+                    >
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="targetDist"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-16 sm:text-right"
+                                >Tgt Dist:</label
                             >
-                                <option value="yards">yd</option>
-                                <option value="meters">m</option>
-                            </select>
+                            <div
+                                class="flex items-center gap-1 w-full sm:w-auto"
+                            >
+                                <input
+                                    type="number"
+                                    id="targetDist"
+                                    bind:value={targetDistance}
+                                    min="0"
+                                    step="any"
+                                    on:input={handleTargetDistanceChange}
+                                    title="Distance to target (set > 0 for MOA/MIL)"
+                                    class="input input-bordered input-xs w-16 text-center grow sm:grow-0"
+                                />
+                                <select
+                                    bind:value={targetDistanceUnit}
+                                    on:change={handleTargetDistanceChange}
+                                    class="select select-bordered select-xs grow sm:grow-0"
+                                >
+                                    <option value="yards">yd</option>
+                                    <option value="meters">m</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="setting-item">
-                            <label for="bulletDiam">Bullet Dia:</label>
-                            <input
-                                type="number"
-                                id="bulletDiam"
-                                bind:value={bulletDiameter}
-                                min="0.01"
-                                step="0.001"
-                                on:input={handleDiameterChange}
-                                title="Bullet diameter (for hole visualization)"
-                                style:width="60px"
-                            />
-                            <select
-                                bind:value={bulletDiameterUnit}
-                                on:change={handleDiameterChange}
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="bulletDiam"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-16 sm:text-right"
+                                >Bullet Dia:</label
                             >
-                                <option value="inches">in</option>
-                                <option value="mm">mm</option>
-                            </select>
+                            <div
+                                class="flex items-center gap-1 w-full sm:w-auto"
+                            >
+                                <input
+                                    type="number"
+                                    id="bulletDiam"
+                                    bind:value={bulletDiameter}
+                                    min="0.01"
+                                    step="0.001"
+                                    on:input={handleDiameterChange}
+                                    title="Bullet diameter (for hole visualization)"
+                                    class="input input-bordered input-xs w-16 text-center grow sm:grow-0"
+                                />
+                                <select
+                                    bind:value={bulletDiameterUnit}
+                                    on:change={handleDiameterChange}
+                                    class="select select-bordered select-xs grow sm:grow-0"
+                                >
+                                    <option value="inches">in</option>
+                                    <option value="mm">mm</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                    <div class="controls settings-row">
-                        <div class="setting-item">
-                            <label for="resultUnit">Units:</label>
+                    <div
+                        class="flex flex-col sm:flex-row md:flex-col flex-wrap gap-x-4 gap-y-3 mb-3 pb-3 border-b border-dashed border-base-300"
+                    >
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="resultUnit"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-16 sm:text-right"
+                                >Units:</label
+                            >
                             <select
                                 id="resultUnit"
                                 bind:value={resultDisplayUnit}
                                 on:change={handleResultUnitChange}
                                 title="Units for displaying results"
+                                class="select select-bordered select-xs w-full sm:w-auto"
                             >
                                 <option value="inches">in</option>
                                 <option value="cm">cm</option>
                                 <option value="mm">mm</option>
                             </select>
                         </div>
-                        <div class="setting-item">
-                            <label for="angularUnit">Angular:</label>
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="angularUnit"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-16 sm:text-right"
+                                >Angular:</label
+                            >
                             <select
                                 id="angularUnit"
                                 bind:value={angularUnitDisplay}
@@ -2352,6 +2272,7 @@
                                 title={targetDistance <= 0
                                     ? "Set Target Distance > 0 to enable MOA/MIL"
                                     : "Angular units for results"}
+                                class="select select-bordered select-xs w-full sm:w-auto"
                             >
                                 <option value="moa">MOA</option>
                                 <option value="mrad">MIL</option>
@@ -2359,47 +2280,76 @@
                             </select>
                         </div>
                     </div>
-                    <div class="controls group-management">
-                        <span>Groups:</span>
-                        {#each groups as group, index (group.id)}
-                            <button
-                                class:active={index === activeGroupIndex}
-                                on:click={() => switchToGroup(index)}
-                                title="Switch to {group.name}"
-                                >{group.name}</button
-                            >
-                            {#if groups.length > 1}<button
-                                    class="danger micro"
-                                    on:click|stopPropagation={() =>
-                                        deleteGroup(index)}
-                                    title="Delete {group.name}">X</button
-                                >{/if}
-                        {/each}
+                    <div
+                        class="flex flex-wrap items-center gap-2 justify-center lg:justify-start mb-3 pb-3 border-b border-dashed border-base-300"
+                    >
+                        <span class="text-sm font-medium mr-1 shrink-0"
+                            >Groups:</span
+                        >
+                        <div
+                            class="btn-group flex-wrap justify-center lg:justify-start"
+                        >
+                            {#each groups as group, index (group.id)}
+                                <button
+                                    class="btn btn-xs"
+                                    class:btn-active={index ===
+                                        activeGroupIndex}
+                                    on:click={() => switchToGroup(index)}
+                                    title="Switch to {group.name}"
+                                    >{group.name}</button
+                                >
+                                {#if groups.length > 1}
+                                    <button
+                                        class="btn btn-error btn-xs btn-square -ml-px z-10"
+                                        on:click|stopPropagation={() =>
+                                            deleteGroup(index)}
+                                        title="Delete {group.name}">X</button
+                                    >
+                                {/if}
+                            {/each}
+                        </div>
                         <button
-                            class="secondary"
+                            class="btn btn-secondary btn-xs btn-square"
                             on:click={addNewGroup}
                             title="Add new group">+</button
                         >
                     </div>
                     {#if activeGroup}
-                        <div class="controls">
-                            <label for="groupName">Active Name:</label>
+                        <div class="flex items-center gap-2">
+                            <label
+                                for="groupName"
+                                class="label text-xs font-medium whitespace-nowrap"
+                                >Active Name:</label
+                            >
                             <input
                                 type="text"
                                 id="groupName"
                                 bind:value={activeGroup.name}
                                 on:input={redrawCanvas}
                                 title="Rename active group"
+                                class="input input-bordered input-sm flex-grow"
                             />
                         </div>
                     {/if}
                 </div>
 
-                <div class="controls-section">
-                    <h2>Appearance</h2>
-                    <div class="controls settings-row appearance-row">
-                        <div class="setting-item appearance-item">
-                            <label for="lineWidthBase">Line Width:</label>
+                <div class="card bg-base-100 shadow-md p-3">
+                    <h2
+                        class="text-lg font-semibold mb-2 pb-1 border-b border-base-300 text-center"
+                    >
+                        Appearance
+                    </h2>
+                    <div
+                        class="flex flex-col sm:flex-row flex-wrap gap-x-4 gap-y-3 mb-3 pb-3 border-b border-dashed border-base-300"
+                    >
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="lineWidthBase"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-20 sm:text-right"
+                                >Line Width:</label
+                            >
                             <input
                                 type="number"
                                 id="lineWidthBase"
@@ -2409,10 +2359,17 @@
                                 max="20"
                                 title="Base line width (px)"
                                 on:input={redrawCanvas}
+                                class="input input-bordered input-xs w-16 text-center"
                             />
                         </div>
-                        <div class="setting-item appearance-item">
-                            <label for="legendFontSize">Legend Font:</label>
+                        <div
+                            class="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+                        >
+                            <label
+                                for="legendFontSize"
+                                class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-20 sm:text-right"
+                                >Legend Font:</label
+                            >
                             <input
                                 type="number"
                                 id="legendFontSize"
@@ -2422,106 +2379,130 @@
                                 max="100"
                                 title="Legend font size (px)"
                                 on:input={redrawCanvas}
+                                class="input input-bordered input-xs w-16 text-center"
                             />
                         </div>
                     </div>
-                    <div class="controls settings-row appearance-row color-row">
-                        <div class="setting-item appearance-item color-item">
-                            <label for="bulletHoleColor" title="Bullet holes"
-                                >Hole:</label
+                    <div
+                        class="flex flex-wrap gap-x-4 gap-y-3 mb-3 pb-3 border-b border-dashed border-base-300 justify-around lg:justify-start"
+                    >
+                        <div class="flex items-center gap-1">
+                            <label
+                                for="bulletHoleColor"
+                                title="Bullet holes"
+                                class="label text-xs font-medium">Hole:</label
                             >
                             <input
                                 type="color"
                                 id="bulletHoleColor"
                                 bind:value={bulletHoleColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="selectedHoleColor"
-                                title="Selected hole highlight">Sel Hole:</label
+                                title="Selected hole highlight"
+                                class="label text-xs font-medium"
+                                >Sel Hole:</label
                             >
                             <input
                                 type="color"
                                 id="selectedHoleColor"
                                 bind:value={selectedHoleColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="centroidColor"
-                                title="Group center marker">Center:</label
+                                title="Group center marker"
+                                class="label text-xs font-medium">Center:</label
                             >
                             <input
                                 type="color"
                                 id="centroidColor"
                                 bind:value={centroidColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="aimPointColor"
-                                title="Aiming point marker">Aim Pt:</label
+                                title="Aiming point marker"
+                                class="label text-xs font-medium">Aim Pt:</label
                             >
                             <input
                                 type="color"
                                 id="aimPointColor"
                                 bind:value={aimPointColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
                     </div>
-                    <div class="controls settings-row appearance-row color-row">
-                        <div class="setting-item appearance-item color-item">
+                    <div
+                        class="flex flex-wrap gap-x-4 gap-y-3 justify-around lg:justify-start"
+                    >
+                        <div class="flex items-center gap-1">
                             <label
                                 for="offsetLineColor"
                                 title="Offset line (aim to center)"
-                                >Offset:</label
+                                class="label text-xs font-medium">Offset:</label
                             >
                             <input
                                 type="color"
                                 id="offsetLineColor"
                                 bind:value={offsetLineColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="scaleLineColor"
-                                title="Scale reference line">Scale Ln:</label
+                                title="Scale reference line"
+                                class="label text-xs font-medium"
+                                >Scale Ln:</label
                             >
                             <input
                                 type="color"
                                 id="scaleLineColor"
                                 bind:value={scaleLineColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="legendTextColor"
-                                title="Legend text color">Lgd Text:</label
+                                title="Legend text color"
+                                class="label text-xs font-medium"
+                                >Lgd Text:</label
                             >
                             <input
                                 type="color"
                                 id="legendTextColor"
                                 bind:value={legendTextColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
-                        <div class="setting-item appearance-item color-item">
+                        <div class="flex items-center gap-1">
                             <label
                                 for="legendBgColor"
-                                title="Legend background color">Lgd BG:</label
+                                title="Legend background color"
+                                class="label text-xs font-medium">Lgd BG:</label
                             >
                             <input
                                 type="color"
                                 id="legendBgColor"
                                 bind:value={legendBgColor}
                                 on:input={redrawCanvas}
+                                class="w-8 h-6 p-0.5 border rounded bg-base-100 border-base-300 cursor-pointer"
                             />
                         </div>
                     </div>
@@ -2530,669 +2511,3 @@
         </div>
     </div>
 </div>
-
-<style>
-    /* --- Root Variables (Dark Theme) --- */
-    :root {
-        --bg-color: #242424;
-        --bg-secondary-color: #333;
-        --text-color: #e0e0e0;
-        --text-secondary-color: #b0b0b0;
-        --border-color: #555;
-        --input-bg-color: #444;
-        --input-border-color: #666;
-        --primary-color: #007bff;
-        --primary-hover-color: #3399ff;
-        --secondary-color: #6c757d;
-        --secondary-hover-color: #868e96;
-        --danger-color: #dc3545;
-        --danger-hover-color: #e4606d;
-        --warning-color: #ffc107;
-        --warning-text-color: #333;
-        --warning-hover-color: #ffca2c;
-        --info-bg-color: #17a2b8;
-        --info-text-color: #e0e0e0;
-        --info-border-color: #138496;
-        --instruction-bg-color: #3a3f44;
-        --instruction-text-color: #d1ecf1;
-        --instruction-border-color: #4e555b;
-        --danger-text-color: #f8d7da; /* For text on danger bg */
-        --danger-bg-color-button: var(
-            --danger-color
-        ); /* Keep button background */
-        --highlight-color: #ffdc00;
-        --active-border-color: var(--primary-color);
-        --active-bg-color: #1a4a7f;
-        --active-mode-bg-color: var(--primary-color);
-        --active-mode-border-color: var(--primary-hover-color);
-        --canvas-border-color: #666;
-        --disabled-bg-color: #555;
-        --disabled-border-color: #555;
-        --disabled-text-color: #999;
-    }
-
-    /* --- General Styles --- */
-    .container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        font-family: sans-serif;
-        background-color: var(--bg-color);
-        color: var(--text-color);
-        padding: 0;
-        width: 100%;
-        height: calc(100vh - 2.6em); /* Ensure container takes full height */
-        box-sizing: border-box;
-    }
-
-    h2 {
-        color: var(--text-color);
-        font-size: 1.05em;
-        margin-bottom: 0.4em;
-        margin-top: 0;
-        text-align: center;
-        border-bottom: 1px solid var(--border-color);
-        padding-bottom: 5px;
-    }
-
-    /* --- Main Layout --- */
-    .main-layout {
-        display: flex;
-        flex-direction: column; /* Mobile first */
-        width: 100%;
-        padding: 8px;
-        gap: 10px;
-        box-sizing: border-box;
-        flex-grow: 1; /* Allow layout to fill container */
-        min-height: 0; /* Needed for flex-grow in flex column */
-    }
-
-    .canvas-column {
-        display: flex;
-        flex-direction: column;
-        gap: 8px; /* Consistent gap */
-        width: 100%;
-        box-sizing: border-box;
-        min-height: 0; /* Allow shrinking */
-    }
-
-    .canvas-area-wrapper {
-        position: relative; /* For nudge overlay */
-        width: 100%;
-        flex-grow: 1; /* Allow wrapper to take available space */
-        display: flex; /* Center canvas */
-        justify-content: center;
-        align-items: center;
-        overflow: hidden; /* Clip canvas if needed (though aspect ratio should handle) */
-        min-height: 200px; /* Minimum height */
-    }
-
-    .canvas-area {
-        width: 100%;
-        height: 100%; /* Fill wrapper */
-        overflow: hidden; /* Clip canvas drawing */
-        border: 1px solid var(--canvas-border-color);
-        background-color: var(--bg-color); /* Match page bg */
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        box-sizing: border-box;
-    }
-
-    .canvas-placeholder {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 200px;
-        width: 100%;
-        background-color: var(--bg-secondary-color);
-        border: 1px dashed var(--border-color);
-        border-radius: 6px;
-        padding: 20px;
-        box-sizing: border-box;
-        flex-grow: 1; /* Take space when image not loaded */
-    }
-
-    canvas {
-        display: block;
-        touch-action: none; /* <<< Prevent default touch actions (pull-to-refresh, etc.) >>> */
-        background-color: transparent;
-        image-rendering: pixelated; /* Keep pixels sharp on zoom */
-        /* width/height/aspect-ratio/max-width/max-height set via style attribute */
-        object-fit: contain; /* Ensure canvas scales correctly within its container */
-        max-width: 100%;
-        max-height: 100%;
-    }
-
-    /* --- Controls --- */
-    .controls-column {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        width: 100%;
-        box-sizing: border-box;
-    }
-
-    .controls-section {
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        padding: 10px;
-        background-color: var(--bg-secondary-color);
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px 10px;
-        align-items: center;
-        justify-content: center; /* Center items by default on mobile */
-    }
-
-    .controls > span {
-        /* For labels like "Groups:" */
-        color: var(--text-secondary-color);
-        margin-right: 4px;
-        font-weight: 500;
-        font-size: 0.9em;
-    }
-
-    .settings-row {
-        justify-content: space-around; /* Space out items in the row */
-        width: 100%;
-        border-bottom: 1px dashed var(--border-color);
-        padding-bottom: 8px;
-        margin-bottom: 8px;
-    }
-    .settings-row:last-child {
-        border-bottom: none;
-        padding-bottom: 0;
-        margin-bottom: 0;
-    }
-
-    .setting-item {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        flex-basis: 48%; /* Try to fit two items per row on larger mobile */
-        flex-grow: 1;
-        justify-content: center;
-    }
-
-    .group-management {
-        border-top: 1px dashed var(--border-color);
-        padding-top: 8px;
-        margin-top: 8px;
-    }
-    .group-management button {
-        margin-right: 4px;
-    }
-    .group-management button.active {
-        /* Active group button */
-        border-color: var(--active-border-color);
-        background-color: var(--active-bg-color);
-        color: var(--text-color);
-        font-weight: bold;
-    }
-
-    label {
-        margin-right: 3px;
-        font-weight: 500;
-        color: var(--text-secondary-color);
-        white-space: nowrap;
-        font-size: 0.85em;
-    }
-
-    input[type="number"],
-    input[type="text"],
-    select {
-        padding: 4px 6px;
-        border: 1px solid var(--input-border-color);
-        border-radius: 3px;
-        background-color: var(--input-bg-color);
-        color: var(--text-color);
-        font-size: 0.85em;
-        box-sizing: border-box;
-    }
-    input:disabled,
-    select:disabled {
-        background-color: var(--disabled-bg-color);
-        border-color: var(--disabled-border-color);
-        color: var(--disabled-text-color);
-        cursor: not-allowed;
-        opacity: 0.7;
-    }
-
-    select {
-        appearance: none; /* Custom arrow needed for consistent look */
-        /* Add background SVG for arrow later if desired */
-        min-width: 50px;
-        text-align: center;
-        text-align-last: center; /* Center text */
-    }
-
-    input[type="number"] {
-        width: 65px; /* Default width, adjust as needed */
-    }
-
-    input[type="text"] {
-        /* Group name */
-        flex-grow: 1;
-        min-width: 70px;
-    }
-
-    /* --- Buttons --- */
-    button {
-        padding: 6px 10px;
-        cursor: pointer;
-        background-color: var(--primary-color);
-        color: #fff;
-        border: 1px solid var(--primary-color);
-        border-radius: 3px;
-        transition:
-            background-color 0.2s ease,
-            border-color 0.2s ease;
-        font-size: 0.85em;
-        white-space: nowrap;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-    button:hover:not(:disabled) {
-        background-color: var(--primary-hover-color);
-        border-color: var(--primary-hover-color);
-    }
-    button:disabled {
-        background-color: var(--disabled-bg-color);
-        border-color: var(--disabled-border-color);
-        color: var(--disabled-text-color);
-        cursor: not-allowed;
-        opacity: 0.7;
-    }
-    button.secondary {
-        background-color: var(--secondary-color);
-        border-color: var(--secondary-color);
-        color: var(--text-color);
-    }
-    button.secondary:hover:not(:disabled) {
-        background-color: var(--secondary-hover-color);
-        border-color: var(--secondary-hover-color);
-    }
-    button.danger {
-        background-color: var(--danger-color);
-        border-color: var(--danger-color);
-        color: #fff;
-    }
-    button.danger:hover:not(:disabled) {
-        background-color: var(--danger-hover-color);
-        border-color: var(--danger-hover-color);
-    }
-    button.micro {
-        /* For small buttons like group delete */
-        padding: 2px 5px;
-        font-size: 0.75em;
-        line-height: 1.2;
-        margin-left: -4px; /* Pull closer to associated button */
-    }
-    button.nudge {
-        background-color: var(--warning-color);
-        border-color: var(--warning-color);
-        color: var(--warning-text-color);
-        font-size: 1em;
-        font-weight: bold;
-        padding: 2px 6px;
-        min-width: 30px;
-    }
-    button.nudge:hover:not(:disabled) {
-        background-color: var(--warning-hover-color);
-        border-color: var(--warning-hover-color);
-    }
-
-    /* --- Interaction Controls Bar --- */
-    .interaction-controls {
-        display: flex;
-        flex-direction: column; /* Stack sections vertically */
-        gap: 8px;
-        background-color: var(--bg-secondary-color);
-        padding: 6px 8px;
-        border-radius: 4px;
-        border: 1px solid var(--border-color);
-    }
-    .zoom-pan-save {
-        display: flex;
-        gap: 5px;
-        align-items: center;
-        flex-wrap: wrap;
-        justify-content: flex-start; /* Align left on mobile */
-    }
-    .scale-mode-controls {
-        display: flex;
-        gap: 5px 8px;
-        align-items: center;
-        flex-wrap: wrap;
-        justify-content: flex-start;
-        border-top: 1px dashed var(--border-color);
-        padding-top: 8px;
-        margin-top: 5px;
-    }
-    .mode-buttons {
-        display: flex;
-        gap: 5px;
-        align-items: center;
-        flex-wrap: wrap;
-        justify-content: flex-start; /* Align with scale controls */
-        margin-left: 10px; /* Add space between scale and mode */
-    }
-    .interaction-controls button,
-    .scale-mode-controls button,
-    .mode-buttons button {
-        padding: 4px 8px;
-        font-size: 0.9em;
-        min-width: 35px;
-        background-color: var(--secondary-color); /* Default to secondary */
-        border-color: var(--secondary-color);
-        color: var(--text-color);
-    }
-    .interaction-controls button:hover:not(:disabled),
-    .scale-mode-controls button:hover:not(:disabled),
-    .mode-buttons button:hover:not(:disabled) {
-        background-color: var(--secondary-hover-color);
-        border-color: var(--secondary-hover-color);
-    }
-
-    /* Active mode/state buttons */
-    .scale-mode-controls button.active, /* Active scaling button */
-     .mode-buttons button.active {
-        /* Active mode button */
-        background-color: var(--active-mode-bg-color);
-        border-color: var(--active-mode-border-color);
-        color: white;
-        font-weight: bold;
-    }
-
-    .zoom-pan-save .zoom-level {
-        font-size: 0.8em;
-        color: var(--text-secondary-color);
-        margin: 0 5px;
-        white-space: nowrap;
-    }
-    .zoom-pan-save .save-button {
-        /* Specific style for Save */
-        background-color: var(--primary-color);
-        border-color: var(--primary-color);
-        color: white;
-        margin-left: auto; /* Push save button to the right */
-    }
-    .zoom-pan-save .save-button:hover:not(:disabled) {
-        background-color: var(--primary-hover-color);
-        border-color: var(--primary-hover-color);
-    }
-
-    .instructions {
-        padding: 6px 10px;
-        background-color: var(--instruction-bg-color);
-        border: 1px solid var(--instruction-border-color);
-        border-radius: 4px;
-        color: var(--instruction-text-color);
-        text-align: center;
-        width: 100%;
-        box-sizing: border-box;
-        font-size: 0.8em;
-        margin-top: 3px;
-        line-height: 1.4;
-    }
-
-    /* --- Nudge Overlay --- */
-    .nudge-overlay {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        z-index: 10;
-        background-color: rgba(51, 51, 51, 0.85);
-        border: 1px solid var(--border-color);
-        border-radius: 5px;
-        padding: 8px;
-        box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.4);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 5px;
-    }
-    .nudge-overlay > span {
-        /* "Nudge (Arrows):" text */
-        display: block;
-        text-align: center;
-        width: 100%;
-        margin-bottom: 3px;
-        font-size: 0.9em;
-        color: var(--text-secondary-color);
-    }
-    .nudge-grid {
-        display: grid;
-        grid-template-columns: repeat(3, auto); /* 3 columns for arrows */
-        gap: 4px;
-        justify-content: center;
-        margin-bottom: 5px;
-    }
-    /* Arrow key grid layout */
-    .nudge-grid button:nth-child(1) {
-        grid-column: 2;
-        grid-row: 1;
-    } /* Up */
-    .nudge-grid button:nth-child(2) {
-        grid-column: 1;
-        grid-row: 2;
-    } /* Left */
-    .nudge-grid button:nth-child(3) {
-        grid-column: 3;
-        grid-row: 2;
-    } /* Right */
-    .nudge-grid button:nth-child(4) {
-        grid-column: 2;
-        grid-row: 3;
-    } /* Down */
-
-    .nudge-actions {
-        display: flex;
-        justify-content: center;
-        gap: 10px;
-        width: 100%;
-    }
-    .nudge-actions button.micro {
-        margin-left: 0;
-    } /* Reset micro button margin */
-
-    /* --- Appearance Controls Styling --- */
-    .appearance-row {
-        gap: 5px 15px; /* Adjust gap */
-    }
-    .appearance-item {
-        flex-grow: 1;
-        gap: 5px;
-    }
-    .appearance-item.color-item {
-        flex-basis: auto; /* Let color pickers size naturally */
-        flex-grow: 0;
-    }
-    .appearance-item label {
-        min-width: 60px; /* Align labels a bit */
-        text-align: right;
-        font-size: 0.8em; /* Smaller labels */
-    }
-    .appearance-item input[type="number"] {
-        width: 55px; /* Smaller number inputs */
-    }
-    .appearance-item input[type="color"] {
-        width: 35px;
-        height: 25px;
-        padding: 1px 2px;
-        border: 1px solid var(--input-border-color);
-        border-radius: 3px;
-        background-color: var(--input-bg-color);
-        cursor: pointer;
-    }
-    .color-row {
-        justify-content: space-between;
-    } /* Space out colors */
-
-    /* --- Desktop Layout --- */
-    @media (min-width: 992px) {
-        .main-layout {
-            flex-direction: row; /* Side-by-side */
-            align-items: flex-start;
-            padding: 15px;
-            gap: 15px;
-            height: calc(100vh - 30px); /* Limit height */
-            overflow: hidden; /* Prevent outer scroll */
-        }
-
-        .canvas-column {
-            flex: 3; /* Take more space */
-            order: 1; /* Canvas on left */
-            height: 100%; /* Fill parent height */
-            display: flex; /* Use flex again for vertical layout */
-            flex-direction: column;
-            gap: 10px; /* Adjust gap */
-        }
-
-        .canvas-area-wrapper {
-            flex-grow: 1; /* Allow wrapper to fill canvas column */
-            min-height: 0; /* Override min-height */
-        }
-        .canvas-area {
-            /* max-width/max-height handled by wrapper */
-        }
-
-        .controls-column {
-            flex: 1; /* Take less space */
-            max-width: 380px; /* Limit width */
-            order: 2; /* Controls on right */
-            overflow-y: auto; /* Allow controls to scroll */
-            height: 100%; /* Fill parent height */
-            padding-right: 5px; /* Add padding for scrollbar */
-            min-height: 0; /* Allow shrinking */
-        }
-
-        .settings-row {
-            flex-direction: row; /* Items side-by-side */
-            align-items: center;
-            flex-wrap: wrap; /* Allow wrapping if needed */
-        }
-        .setting-item {
-            flex-basis: auto; /* Reset basis */
-            justify-content: flex-start; /* Align left */
-            width: auto; /* Natural width */
-        }
-
-        .controls {
-            justify-content: flex-start;
-        } /* Align controls left */
-        .group-management {
-            justify-content: flex-start;
-        }
-
-        .interaction-controls {
-            flex-direction: row; /* Side-by-side */
-            align-items: center;
-            flex-wrap: wrap; /* Allow wrap */
-        }
-        .scale-mode-controls {
-            border-top: none; /* Remove border */
-            padding-top: 0;
-            margin-top: 0;
-            flex-grow: 1; /* Allow this section to take space */
-        }
-        .mode-buttons {
-            margin-left: auto; /* Push mode buttons to right */
-        }
-
-        .zoom-pan-save .save-button {
-            margin-left: 15px;
-        } /* Add some space before save */
-        .appearance-item label {
-            min-width: 70px;
-        } /* Slightly wider labels on desktop */
-    }
-
-    /* --- Tablet/Mobile Tweaks --- */
-    @media (max-width: 991px) {
-        .canvas-area-wrapper {
-            max-height: 70vh; /* Limit canvas height on mobile */
-        }
-        .setting-item {
-            flex-basis: 100%; /* Full width per item */
-            justify-content: space-between; /* Space label and input */
-        }
-        .setting-item label {
-            text-align: left;
-        }
-        .setting-item input,
-        .setting-item select {
-            flex-grow: 0;
-            width: auto;
-        } /* Don't grow inputs */
-        input[type="number"] {
-            width: 80px;
-        } /* Slightly wider inputs */
-        .mode-buttons {
-            justify-content: center;
-            margin-left: 0;
-        } /* Center mode buttons */
-        .mode-buttons button {
-            flex-basis: calc(33% - 4px);
-        } /* Try 3 buttons per row */
-        .group-management {
-            justify-content: center;
-        }
-        .zoom-pan-save .save-button {
-            margin-left: 5px;
-        } /* Reset margin */
-        .scale-mode-controls {
-            justify-content: center;
-        }
-        .color-row {
-            justify-content: center;
-        }
-    }
-
-    /* --- Smaller Mobile Tweaks --- */
-    @media (max-width: 480px) {
-        h2 {
-            font-size: 1em;
-        }
-        .setting-item {
-            flex-direction: column;
-            align-items: stretch;
-        } /* Stack label and input */
-        .setting-item label {
-            margin-bottom: 3px;
-        }
-        .appearance-item label {
-            min-width: unset;
-            text-align: left;
-        }
-        .mode-buttons button {
-            flex-basis: calc(50% - 4px);
-        } /* Two per row */
-        .controls-section {
-            padding: 8px;
-        }
-        .interaction-controls {
-            padding: 5px;
-        }
-        .zoom-pan-save,
-        .scale-mode-controls,
-        .mode-buttons {
-            gap: 4px;
-        }
-        button {
-            padding: 5px 8px;
-            font-size: 0.8em;
-        }
-        .color-row .setting-item {
-            flex-basis: 45%;
-        } /* Fit two colors per row */
-    }
-</style>

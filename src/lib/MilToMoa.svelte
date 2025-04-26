@@ -10,38 +10,35 @@
 	}
 </script>
 
-<div class="container">
-	<div>
-		<strong>Mils:</strong>
-	</div>
-	<div>
+<section class="grid grid-cols-[4em_1fr]">
+	<strong>Mil:</strong>
+	<label class="input">
 		<input
 			type="number"
 			bind:value={userMrad}
-			style="width: 6em; height: 1.1em"
+			min="0"
 		/>
 		<button onclick={() => modMrad(1)}>+1</button>
 		<button onclick={() => modMrad(0.2)}>+0.2</button>
 		<button onclick={() => modMrad(-0.2)}>-0.2</button>
 		<button onclick={() => modMrad(-1)}>-1</button>
-	</div>
-
-	<div>
-		<strong>MOA:</strong>
-	</div>
-	<div>
+	</label>
+	
+	<strong>MOA:</strong>
+	<label class="input">
+		
 		<input
 			type="text"
 			bind:value={userMradToMoa}
-			style="width: 18em; height: 1.1em"
 			disabled
 		/>
-	</div>
-</div>
+	</label>
+</section>
 
 <style>
-	.container {
-		display: grid;
-		grid-template-columns: 4em 1fr;
+	button {
+		height: 100%;
+		padding: 2px;
+		margin: 0;
 	}
 </style>

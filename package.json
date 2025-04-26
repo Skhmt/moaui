@@ -12,6 +12,7 @@
 	},
 	"devDependencies": {
 		"@sveltejs/vite-plugin-svelte": "^5.0.3",
+		"@tailwindcss/typography": "^0.5.16",
 		"@tsconfig/svelte": "^5.0.4",
 		"@types/geodesy": "^2.2.8",
 		"@vite-pwa/assets-generator": "^1.0.0",
@@ -23,6 +24,9 @@
 	},
 	"dependencies": {
 		"@moa/moa": "npm:@jsr/moa__moa@^0.2.0",
-		"geodesy": "^2.4.0"
+		"@tailwindcss/vite": "^4.1.4",
+		"daisyui": "^5.0.28",
+		"geodesy": "^2.4.0",
+		"tailwindcss": "^4.1.4"
 	}
 }

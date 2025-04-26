@@ -41,13 +41,9 @@
 	});
 </script>
 
-<div>
-	<div>
-		<input
-			type="number"
-			bind:value={leftValue}
-			style="width: 16em; height: 1.1em"
-		/>
+<section>
+	<label class="input">
+		<input type="number" bind:value={leftValue} min="0" />
 		<select bind:value={leftUnit}>
 			<option>Centimeters</option>
 			<option>Feet</option>
@@ -57,15 +53,10 @@
 			<option>Miles</option>
 			<option>Yards</option>
 		</select>
-	</div>
-
-	<div>
-		<input
-			type="number"
-			bind:value={rightValue}
-			style="width: 16em; height: 1.1em"
-			disabled
-		/>
+	</label>
+	<br />
+	<label class="input">
+		<input type="number" bind:value={rightValue} disabled />
 		<select bind:value={rightUnit}>
 			<option>Centimeters</option>
 			<option>Feet</option>
@@ -75,5 +66,11 @@
 			<option>Miles</option>
 			<option>Yards</option>
 		</select>
-	</div>
-</div>
+	</label>
+</section>
+
+<style>
+	option {
+		text-align-last: right;
+	}
+</style>
