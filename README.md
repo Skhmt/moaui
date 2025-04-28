@@ -8,6 +8,8 @@
 
 - Put caliber and range and #shots in the legend, allow toggling group#
 - when resizing a loaded image, it skews the image
+- Still too small on mobile
+- Fix tailwind styling for mobile and colors 
 
 - Pre-set sizes for MAM, deer, hog, coyote, car, truck, door, window
 - Notes/Dope section?
