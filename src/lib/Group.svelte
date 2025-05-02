@@ -2041,7 +2041,7 @@
 						id="fileInput"
 						accept="image/*"
 						on:change={handleFileSelect}
-						class="file-input file-input-bordered file-input-sm max-w-[20em] flex-grow"
+						class="file-input file-input-bordered file-input-sm max-w-[17em] flex-grow"
 					/>
 					<button
 						class="btn btn-primary btn-sm lg:order-last"
