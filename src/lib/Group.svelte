@@ -2182,7 +2182,7 @@
 								class="grid grid-cols-3 gap-1 justify-center mb-1"
 							>
 								<button
-									class="btn btn-warning btn-xs btn-square col-start-2 row-start-1"
+									class="btn btn-info btn-xs btn-square col-start-2 row-start-1"
 									on:click={() =>
 										handleKeyDown({
 											key: "ArrowUp",
@@ -2191,7 +2191,7 @@
 									title="Nudge Up">↑</button
 								>
 								<button
-									class="btn btn-warning btn-xs btn-square col-start-1 row-start-2"
+									class="btn btn-info btn-xs btn-square col-start-1 row-start-2"
 									on:click={() =>
 										handleKeyDown({
 											key: "ArrowLeft",
@@ -2200,7 +2200,7 @@
 									title="Nudge Left">←</button
 								>
 								<button
-									class="btn btn-warning btn-xs btn-square col-start-3 row-start-2"
+									class="btn btn-info btn-xs btn-square col-start-3 row-start-2"
 									on:click={() =>
 										handleKeyDown({
 											key: "ArrowRight",
@@ -2209,7 +2209,7 @@
 									title="Nudge Right">→</button
 								>
 								<button
-									class="btn btn-warning btn-xs btn-square col-start-2 row-start-3"
+									class="btn btn-info btn-xs btn-square col-start-2 row-start-3"
 									on:click={() =>
 										handleKeyDown({
 											key: "ArrowDown",
@@ -2218,20 +2218,20 @@
 									title="Nudge Down">↓</button
 								>
 							</div>
-							<div class="flex justify-center gap-2 w-full">
-								<button
-									class="btn btn-secondary btn-xs"
+							<div class="flex justify-center gap-2 w-full mt-2">
+								<!-- <button
+									class="btn btn-soft btn-warning btn-xs"
 									on:click={() => {
 										selectedHoleIndex = null;
 										redrawCanvas();
 									}}
 									title="Deselect hole">Clear Sel.</button
-								>
+								> -->
 								<button
-									class="btn btn-error btn-xs"
+									class="btn btn-soft btn-error btn-xs"
 									on:click={deleteSelectedHole}
 									title="Delete selected hole (Del/Bksp)"
-									>Delete Sel.</button
+									>Delete</button
 								>
 							</div>
 						</div>
@@ -2324,7 +2324,7 @@
 						>
 							<label
 								for="targetDist"
-								class="label text-xs font-medium whitespace-nowrap shrink-0 w-16 sm:text-right"
+								class="label text-xs font-medium whitespace-nowrap shrink-0 xs:w-16 sm:text-right"
 								>Tgt Dist:</label
 							>
 							<div
@@ -2355,7 +2355,7 @@
 						>
 							<label
 								for="bulletDiam"
-								class="label text-xs font-medium whitespace-nowrap shrink-0 w-16 sm:text-right"
+								class="label text-xs font-medium whitespace-nowrap shrink-0 xs:w-16 sm:text-right"
 								>Bullet Dia:</label
 							>
 							<div
