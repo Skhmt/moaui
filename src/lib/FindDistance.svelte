@@ -38,17 +38,32 @@
 
 		return Number(distInMeters.toFixed(3));
 	});
+
+	function setSize(size: number, unit: string) {
+		sizeValue = size;
+		sizeUnit = unit;
+	}
 </script>
 
-<!--
-🚪door: 80 in
-🦌 white-tail: 39 in shoulder
-🧍male: 68 in
-🐖hog: 2.75 ft shoulder
-30" ipsc
--->
-
 <section class="grid grid-cols-[5em_1fr]">
+	<div class="col-span-2">
+		<button class="btn" onclick={() => setSize(3.25, 'Feet')}>
+			🦌 white-tail deer to shoulder (3.25 ft)
+		</button>
+
+		<button class="btn" onclick={() => setSize(2.75, 'Feet')}>
+			🐖 hog to shoulder (2.75 ft)
+		</button>
+
+		<button class="btn" onclick={() => setSize(75, 'Centimeters')}>
+			🧟‍♂️ IPSC "metric" torso silhouette target (75 cm)
+		</button>
+
+		<button class="btn" onclick={() => setSize(57, 'Centimeters')}>
+			🛑 IPSC "classic" modern octagon target (57cm)
+		</button>
+	</div>
+
 	<strong>Size:</strong>
 	<label class="input">
 		<input type="number" bind:value={sizeValue} />

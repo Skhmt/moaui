@@ -3,15 +3,6 @@
 	import Mgrs, { LatLon as MgrsLatLon } from 'geodesy/mgrs.js';
 	import { yd2m, ft2m, mi2m, km2m } from '@moa/moa';
 
-	/* Examples:
-		const mgrs = Mgrs.parse('31U DQ 48251 11932');
-		const latlon = mgrs.toUtm().toLatLon();
-		console.assert(latlon.toString('dms', 2) == '48° 51′ 29.50″ N, 002° 17′ 40.16″ E');
-
-		// *might* need to import latlon-ellipsoidal.js
-		LatLon.parse('58°38′38″N, 003°04′12″W');
-	*/
-
 	let coordsValue = $state(`0`);
 	let distanceValue = $state(0);
 	let distanceUnit = $state('Meters');
@@ -40,14 +31,6 @@
 
 		let vLL = new LatLon(latlon.lat, latlon.lon);
 		let destination = vLL.destinationPoint(distInMeters, bearingValue);
-
-		/*
-			const greenwich = new LatLon(51.47788, -0.00147, 46);
-			const d = greenwich.toString();                        // 51.4779°N, 000.0015°W
-			const dms = greenwich.toString('dms', 2);              // 51°28′40″N, 000°00′05″W
-			const [lat, lon] = greenwich.toString('n').split(','); // 51.4779, -0.0015
-			const dmsh = greenwich.toString('dms', 0, 0);          // 51°28′40″N, 000°00′06″W +46m
-		*/
 
 		if (targetType === 'mgrs') {
 			let mgrs = new MgrsLatLon(destination.lat, destination.lon);
@@ -80,7 +63,6 @@
 				if (ev.hasOwnProperty('webkitCompassHeading'))
 					//@ts-ignore
 					bearingValue = ev.webkitCompassHeading;
-				// else if (ev.hasOwnProperty('alpha')) bearingValue = Math.abs(ev.alpha - 360);
 				else if (ev.alpha !== null)
 					bearingValue = Math.abs(ev.alpha - 360);
 				else alert('No compass found.');
