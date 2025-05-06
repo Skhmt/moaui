@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from "svelte";
-	import * as moa from "@moa/moa"; // Assuming moa.txt is renamed/served as moa.mjs
+	import { onMount, onDestroy, tick } from 'svelte';
+	import * as moa from '@moa/moa'; // Assuming moa.txt is renamed/served as moa.mjs
 
 	// --- Kept Constants ---
 	const NUDGE_AMOUNT_DISPLAY_PIXELS = 2;
@@ -51,16 +51,16 @@
 		infoBoxSize: { width: number; height: number } | null;
 	}
 	type Mode =
-		| "loading"
-		| "scaling"
-		| "placingHoles"
-		| "placingAim"
-		| "selectingHole"
-		| "panning";
-	type LinearUnit = "inches" | "cm" | "mm" | "meters" | "yards"; // Keep broader type for flexibility
-	type DistanceUnit = "yards" | "meters";
-	type DiameterUnit = "inches" | "mm";
-	type AngularUnitDisplay = "moa" | "mrad" | "none";
+		| 'loading'
+		| 'scaling'
+		| 'placingHoles'
+		| 'placingAim'
+		| 'selectingHole'
+		| 'panning';
+	type LinearUnit = 'inches' | 'cm' | 'mm' | 'meters' | 'yards'; // Keep broader type for flexibility
+	type DistanceUnit = 'yards' | 'meters';
+	type DiameterUnit = 'inches' | 'mm';
+	type AngularUnitDisplay = 'moa' | 'mrad' | 'none';
 
 	// --- State Variables  ---
 	let imageFile: File | null = null;
@@ -69,14 +69,14 @@
 	let canvasAreaElement: HTMLDivElement | undefined;
 	let ctx: CanvasRenderingContext2D | null = null;
 	let imageBitmap: ImageBitmap | null = null;
-	let mode: Mode = "loading";
+	let mode: Mode = 'loading';
 	let scale: number | null = null; // pixels per referenceUnit
-	let referenceUnit: LinearUnit = "inches";
+	let referenceUnit: LinearUnit = 'inches';
 	let referenceLength: number = 1;
-	let resultDisplayUnit: LinearUnit = "inches";
-	let bulletDiameterUnit: DiameterUnit = "inches";
-	let targetDistanceUnit: DistanceUnit = "yards";
-	let angularUnitDisplay: AngularUnitDisplay = "moa";
+	let resultDisplayUnit: LinearUnit = 'inches';
+	let bulletDiameterUnit: DiameterUnit = 'inches';
+	let targetDistanceUnit: DistanceUnit = 'yards';
+	let angularUnitDisplay: AngularUnitDisplay = 'moa';
 	let bulletDiameter: number = 0.22;
 	let targetDistance: number = 100;
 	let refLineStart: Point | null = null;
@@ -109,19 +109,19 @@
 
 	// --- Style State Variables  ---
 	let legendFontSize: number = 12;
-	let legendTextColor: string = "#e0e0e0";
-	let legendBgColor: string = "#000000";
-	let legendBorderColor: string = "#555555";
+	let legendTextColor: string = '#e0e0e0';
+	let legendBgColor: string = '#000000';
+	let legendBorderColor: string = '#555555';
 	let lineWidthBase: number = 2;
-	let bulletHoleColor: string = "#FF4136";
-	let inactiveBulletHoleColor: string = "rgba(255,65,54,0.7)";
-	let selectedHoleColor: string = "#FFDC00";
+	let bulletHoleColor: string = '#FF4136';
+	let inactiveBulletHoleColor: string = 'rgba(255,65,54,0.7)';
+	let selectedHoleColor: string = '#FFDC00';
 	let selectedHoleLineWidthMultiplier: number = 2;
-	let centroidColor: string = "#0074D9";
-	let aimPointColor: string = "#FF851B";
-	let offsetLineColor: string = "#00BFFF";
+	let centroidColor: string = '#0074D9';
+	let aimPointColor: string = '#FF851B';
+	let offsetLineColor: string = '#00BFFF';
 	let offsetLineWidthMultiplier: number = 0.8;
-	let scaleLineColor: string = "#00FF00";
+	let scaleLineColor: string = '#00FF00';
 	let scaleLineWidth: number = 2;
 	let scaleMarkerSize: number = 6;
 
@@ -129,21 +129,21 @@
 	onMount(() => {
 		dpr = window.devicePixelRatio || 1;
 
-		window.addEventListener("pointermove", handleWindowPointerMove);
-		window.addEventListener("pointerup", handleWindowPointerUp);
-		window.addEventListener("keydown", handleKeyDown);
+		window.addEventListener('pointermove', handleWindowPointerMove);
+		window.addEventListener('pointerup', handleWindowPointerUp);
+		window.addEventListener('keydown', handleKeyDown);
 	});
 	onDestroy(() => {
 		// Cleanup global listeners
-		window.removeEventListener("pointermove", handleWindowPointerMove);
-		window.removeEventListener("pointerup", handleWindowPointerUp);
-		window.removeEventListener("keydown", handleKeyDown);
+		window.removeEventListener('pointermove', handleWindowPointerMove);
+		window.removeEventListener('pointerup', handleWindowPointerUp);
+		window.removeEventListener('keydown', handleKeyDown);
 
 		// --- Cleanup observer on component destroy ---
 		cleanupResizeObserver();
 
 		// Cleanup image object URL and bitmap
-		if (imageUrl && imageUrl.startsWith("blob:"))
+		if (imageUrl && imageUrl.startsWith('blob:'))
 			URL.revokeObjectURL(imageUrl);
 		if (imageBitmap) imageBitmap.close();
 		imageBitmap = null;
@@ -216,9 +216,9 @@
 	// --- setupCanvas  ---
 	function setupCanvas(): void {
 		if (!canvasElement || !imageUrl || !imageFile) return;
-		const context = canvasElement.getContext("2d", { alpha: false });
+		const context = canvasElement.getContext('2d', { alpha: false });
 		if (!context) {
-			alert("Canvas init error.");
+			alert('Canvas init error.');
 			reset();
 			return;
 		}
@@ -272,11 +272,11 @@
 					resetZoomToFit();
 					redrawCanvas();
 				});
-				mode = "scaling";
+				mode = 'scaling';
 			})
 			.catch((err) => {
-				console.error("createImageBitmap error:", err);
-				alert("Image load error.");
+				console.error('createImageBitmap error:', err);
+				alert('Image load error.');
 				reset();
 			});
 	}
@@ -288,15 +288,15 @@
 		targetUnit: LinearUnit | DistanceUnit,
 	): number {
 		switch (targetUnit) {
-			case "inches":
+			case 'inches':
 				return moa.m2in(value);
-			case "cm":
+			case 'cm':
 				return moa.m2cm(value);
-			case "mm":
+			case 'mm':
 				return moa.m2cm(value) * 10;
-			case "meters":
+			case 'meters':
 				return value;
-			case "yards":
+			case 'yards':
 				return moa.m2yd(value);
 			default:
 				return value; // Should not happen
@@ -311,19 +311,19 @@
 		if (from === to) return value;
 		let meters: number;
 		switch (from) {
-			case "inches":
+			case 'inches':
 				meters = moa.in2m(value);
 				break;
-			case "cm":
+			case 'cm':
 				meters = moa.cm2m(value);
 				break;
-			case "mm":
+			case 'mm':
 				meters = moa.cm2m(value / 10);
 				break;
-			case "yards":
+			case 'yards':
 				meters = moa.yd2m(value);
 				break;
-			case "meters":
+			case 'meters':
 				meters = value;
 				break;
 			default:
@@ -434,7 +434,7 @@
 		const cW = canvasElement.width;
 		const cH = canvasElement.height;
 		ctx.save();
-		ctx.fillStyle = "#000";
+		ctx.fillStyle = '#000';
 		ctx.fillRect(0, 0, cW, cH);
 		ctx.imageSmoothingEnabled = true;
 		let dx = 0,
@@ -542,8 +542,8 @@
 		// --- Colors and Line Width (Unchanged) ---
 		const hC = act ? bulletHoleColor : inactiveBulletHoleColor;
 		const hSC = selectedHoleColor;
-		const ceC = act ? centroidColor : "rgba(0,116,217,0.7)";
-		const aiC = act ? aimPointColor : "rgba(255,133,27,0.7)";
+		const ceC = act ? centroidColor : 'rgba(0,116,217,0.7)';
+		const aiC = act ? aimPointColor : 'rgba(255,133,27,0.7)';
 		const ofC = offsetLineColor;
 		const lW = Math.max(0.5 * dpr, lineWidthBase * dpr); // Base line width in buffer pixels
 
@@ -650,7 +650,7 @@
 		if (showGroupNameInLegend) lines.push(group.name);
 
 		lines.push(
-			`(${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit})`,
+			`${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit}`,
 		);
 		if (group.maxSpread !== null) {
 			// Display Max Spread
@@ -659,11 +659,11 @@
 				referenceUnit,
 				resultDisplayUnit,
 			);
-			let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
-			if (angularUnitDisplay === "moa" && group.maxSpreadMOA !== null)
+			let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit}`;
+			if (angularUnitDisplay === 'moa' && group.maxSpreadMOA !== null)
 				l += ` (${group.maxSpreadMOA.toFixed(2)} MOA)`;
 			else if (
-				angularUnitDisplay === "mrad" &&
+				angularUnitDisplay === 'mrad' &&
 				group.maxSpreadMRAD !== null
 			)
 				l += ` (${group.maxSpreadMRAD.toFixed(2)} MRAD)`;
@@ -677,11 +677,11 @@
 				referenceUnit,
 				resultDisplayUnit,
 			);
-			let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
-			if (angularUnitDisplay === "moa" && group.meanRadiusMOA !== null)
+			let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit}`;
+			if (angularUnitDisplay === 'moa' && group.meanRadiusMOA !== null)
 				l += ` (${group.meanRadiusMOA.toFixed(2)} MOA)`;
 			else if (
-				angularUnitDisplay === "mrad" &&
+				angularUnitDisplay === 'mrad' &&
 				group.meanRadiusMRAD !== null
 			)
 				l += ` (${group.meanRadiusMRAD.toFixed(2)} MRAD)`;
@@ -695,7 +695,7 @@
 				resultDisplayUnit,
 			);
 			lines.push(
-				`Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
+				`Offset: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
 			);
 		}
 		// Box drawing logic (mostly unchanged)
@@ -761,8 +761,8 @@
 			0,
 			Math.min(pos.y, ctx.canvas.height - group.infoBoxSize.height * dpr),
 		); // Clamp Y
-		const bgColorWithAlpha = styles.bgColor.startsWith("#")
-			? styles.bgColor + "E6"
+		const bgColorWithAlpha = styles.bgColor.startsWith('#')
+			? styles.bgColor + 'E6'
 			: styles.bgColor;
 		ctx.fillStyle = bgColorWithAlpha;
 		ctx.strokeStyle = styles.borderColor;
@@ -781,8 +781,8 @@
 		); // Draw box border
 		ctx.fillStyle = styles.textColor;
 		ctx.font = `${fS * dpr}px sans-serif`;
-		ctx.textAlign = "left";
-		ctx.textBaseline = "top";
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'top';
 		lines.forEach((line, i) =>
 			ctx.fillText(
 				line,
@@ -806,17 +806,17 @@
 	function handleFileSelect(e: Event) {
 		const t = e.target as HTMLInputElement;
 		const f = t.files?.[0];
-		if (f && f.type.startsWith("image/")) {
+		if (f && f.type.startsWith('image/')) {
 			imageFile = f;
-			if (imageUrl && imageUrl.startsWith("blob:"))
+			if (imageUrl && imageUrl.startsWith('blob:'))
 				URL.revokeObjectURL(imageUrl);
 			imageUrl = URL.createObjectURL(f);
 			resetStateForNewImage();
-			mode = "loading";
+			mode = 'loading';
 			requestAnimationFrame(setupCanvas);
 		} else {
-			alert("Select valid image.");
-			if (t) t.value = "";
+			alert('Select valid image.');
+			if (t) t.value = '';
 			imageFile = null;
 			imageUrl = null;
 			reset();
@@ -888,7 +888,7 @@
 		}
 
 		// Hole dragging
-		if (mode === "selectingHole" && selectedHoleIndex !== null && scale) {
+		if (mode === 'selectingHole' && selectedHoleIndex !== null && scale) {
 			const g = groups[activeGroupIndex];
 			if (g && selectedHoleIndex < g.bulletHolesPixels.length) {
 				const selectedHolePx = g.bulletHolesPixels[selectedHoleIndex];
@@ -914,7 +914,7 @@
 					draggingHoleStartCoords = { ...iCoords }; // Store starting image coords of pointer
 
 					(e.target as HTMLElement).setPointerCapture(e.pointerId);
-					canvasElement.style.cursor = "grabbing"; // Update cursor
+					canvasElement.style.cursor = 'grabbing'; // Update cursor
 					e.stopPropagation();
 					return; // Prevent other modes
 				}
@@ -922,17 +922,17 @@
 		}
 
 		// Check panning or drawing ref line
-		if (mode === "panning") {
+		if (mode === 'panning') {
 			isPanning = true;
 			panStartPointerCoords = dCoords;
 			panStartViewCenter = { ...viewCenter };
 			(e.target as HTMLElement).setPointerCapture(e.pointerId);
-			canvasElement.style.cursor = "grabbing";
+			canvasElement.style.cursor = 'grabbing';
 			e.stopPropagation();
 			return;
 		}
 
-		if (mode === "scaling" && iCoords) {
+		if (mode === 'scaling' && iCoords) {
 			(e.target as HTMLElement).setPointerCapture(e.pointerId);
 			isDrawingRefLine = true;
 			refLineStart = iCoords;
@@ -1042,7 +1042,7 @@
 		}
 		// Scaling Line Drawing
 		else if (
-			mode === "scaling" &&
+			mode === 'scaling' &&
 			isDrawingRefLine &&
 			refLineStart &&
 			canvasElement.hasPointerCapture(e.pointerId)
@@ -1097,7 +1097,7 @@
 		}
 		// Scaling Line Draw End
 		else if (
-			mode === "scaling" &&
+			mode === 'scaling' &&
 			isDrawingRefLine &&
 			canvasElement?.hasPointerCapture(e.pointerId)
 		) {
@@ -1109,7 +1109,7 @@
 				if (finalI) refLineEnd = finalI;
 			}
 			if (refLineStart && refLineEnd) {
-				if (calculateScale()) mode = "placingHoles";
+				if (calculateScale()) mode = 'placingHoles';
 				else {
 					refLineStart = null;
 					refLineEnd = null;
@@ -1167,7 +1167,7 @@
 		if (!iCoords) return;
 		const g = groups[activeGroupIndex];
 		// Placing Holes
-		if (mode === "placingHoles" && scale) {
+		if (mode === 'placingHoles' && scale) {
 			const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Real coords in referenceUnit
 			g.bulletHolesPixels.push(iCoords);
 			g.bulletHolesReal.push(rCoords);
@@ -1179,7 +1179,7 @@
 			redrawCanvas();
 		}
 		// Placing Aim Point
-		else if (mode === "placingAim" && scale) {
+		else if (mode === 'placingAim' && scale) {
 			const rCoords = { x: iCoords.x / scale, y: iCoords.y / scale }; // Real coords in referenceUnit
 			g.aimingPointPixels = iCoords;
 			g.aimingPointReal = rCoords;
@@ -1187,11 +1187,11 @@
 			groups = groups;
 			await tick();
 			calculateGroupResults(activeGroupIndex);
-			mode = "placingHoles";
+			mode = 'placingHoles';
 			redrawCanvas();
 		}
 		// Selecting Hole
-		else if (mode === "selectingHole") {
+		else if (mode === 'selectingHole') {
 			if (
 				!scale ||
 				!lastViewport ||
@@ -1246,20 +1246,20 @@
 			(NUDGE_AMOUNT_DISPLAY_PIXELS / canvasElement.clientHeight) *
 			lastViewport.sHeight;
 		switch (e.key) {
-			case "ArrowUp":
+			case 'ArrowUp':
 				dyI = -nudgeYImage;
 				break;
-			case "ArrowDown":
+			case 'ArrowDown':
 				dyI = nudgeYImage;
 				break;
-			case "ArrowLeft":
+			case 'ArrowLeft':
 				dxI = -nudgeXImage;
 				break;
-			case "ArrowRight":
+			case 'ArrowRight':
 				dxI = nudgeXImage;
 				break;
-			case "Delete":
-			case "Backspace":
+			case 'Delete':
+			case 'Backspace':
 				e.preventDefault();
 				deleteSelectedHole();
 				return;
@@ -1371,7 +1371,7 @@
 			const distMeters = convertUnits(
 				targetDistance,
 				targetDistanceUnit,
-				"meters",
+				'meters',
 			);
 			if (distMeters > 0) {
 				if (g.meanRadius !== null) {
@@ -1379,7 +1379,7 @@
 					const radiusMeters = convertUnits(
 						g.meanRadius,
 						referenceUnit,
-						"meters",
+						'meters',
 					);
 					const angleRad = radiusMeters / distMeters; // Small angle approx
 					g.meanRadiusMRAD = angleRad * 1000;
@@ -1390,7 +1390,7 @@
 					const spreadMeters = convertUnits(
 						g.maxSpread,
 						referenceUnit,
-						"meters",
+						'meters',
 					);
 					const angleRad = spreadMeters / distMeters;
 					g.maxSpreadMRAD = angleRad * 1000;
@@ -1404,11 +1404,12 @@
 			const dx = g.centroidReal.x - g.aimingPointReal.x;
 			const dy = g.centroidReal.y - g.aimingPointReal.y;
 			const dist = Math.sqrt(dx * dx + dy * dy); // Distance in referenceUnit
-			let angleRad = Math.atan2(-dy, dx);
+			let angleRad = Math.atan2(dy, dx);
 			if (angleRad < 0) angleRad += 2 * Math.PI;
 			g.offsetFromAim = {
 				distance: dist,
-				angleDegrees: angleRad * (180 / Math.PI),
+				angleDegrees:
+					(((angleRad * (180 / Math.PI) - 90) % 360) + 360) % 360,
 			};
 		} else g.offsetFromAim = null;
 		g.resultsValid = true;
@@ -1447,18 +1448,18 @@
 		groups = [...groups, nG];
 		activeGroupIndex = groups.length - 1;
 		selectedHoleIndex = null;
-		if (!imageBitmap) mode = "loading";
-		else if (!scale) mode = "scaling";
-		else mode = "placingHoles";
+		if (!imageBitmap) mode = 'loading';
+		else if (!scale) mode = 'scaling';
+		else mode = 'placingHoles';
 		redrawCanvas();
 	}
 	function switchToGroup(idx: number) {
 		if (idx >= 0 && idx < groups.length && idx !== activeGroupIndex) {
 			activeGroupIndex = idx;
 			selectedHoleIndex = null;
-			if (!imageBitmap) mode = "loading";
-			else if (!scale) mode = "scaling";
-			else mode = "placingHoles";
+			if (!imageBitmap) mode = 'loading';
+			else if (!scale) mode = 'scaling';
+			else mode = 'placingHoles';
 			redrawCanvas();
 		}
 	}
@@ -1624,7 +1625,7 @@
 
 	// --- Scale Controls  ---
 	function enterScaleMode() {
-		mode = "scaling";
+		mode = 'scaling';
 		refLineStart = null;
 		refLineEnd = null;
 		isDrawingRefLine = false;
@@ -1683,25 +1684,25 @@
 		viewScale = 1.0;
 		viewCenter = { x: 0, y: 0 };
 		lastViewport = null;
-		mode = "loading";
+		mode = 'loading';
 		fitScaleValue = 1.0;
 	}
 	function reset() {
 		if (
 			!confirm(
-				"Are you sure you want to start over? All current data will be lost.",
+				'Are you sure you want to start over? All current data will be lost.',
 			)
 		)
 			return;
 		resetStateForNewImage();
 		if (ctx && canvasElement)
 			ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-		if (imageUrl && imageUrl.startsWith("blob:"))
+		if (imageUrl && imageUrl.startsWith('blob:'))
 			URL.revokeObjectURL(imageUrl);
 		imageFile = null;
 		imageUrl = null;
 		ctx = null;
-		if (fileInputEl) fileInputEl.value = "";
+		if (fileInputEl) fileInputEl.value = '';
 	}
 
 	// --- Input Handlers (Unchanged logic, rely on redraw/recalculate) ---
@@ -1723,7 +1724,7 @@
 		else {
 			// Invalidate scale if no line exists
 			scale = null;
-			mode = "scaling";
+			mode = 'scaling';
 			groups.forEach((g, i) => {
 				invalidateResults(i);
 				g.infoBoxAnchorImage = null;
@@ -1744,19 +1745,19 @@
 	// --- exportCanvasAsJpeg (Using 'convertUnits' and moa.mrad2moa) ---
 	function exportCanvasAsJpeg(): void {
 		if (!canvasElement || !imageBitmap || !ctx || !scale) {
-			alert("Canvas/image/scale not ready.");
+			alert('Canvas/image/scale not ready.');
 			return;
 		}
-		const exportCanvas = document.createElement("canvas");
+		const exportCanvas = document.createElement('canvas');
 		exportCanvas.width = imageBitmap.width;
 		exportCanvas.height = imageBitmap.height;
-		const exportCtx = exportCanvas.getContext("2d");
+		const exportCtx = exportCanvas.getContext('2d');
 		if (!exportCtx) {
-			alert("Failed context.");
+			alert('Failed context.');
 			return;
 		}
 		exportCtx.imageSmoothingEnabled = true;
-		exportCtx.fillStyle = "#FFFFFF";
+		exportCtx.fillStyle = '#FFFFFF';
 		exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
 		exportCtx.drawImage(imageBitmap, 0, 0);
 		exportCtx.save(); // Save before overlays
@@ -1799,10 +1800,10 @@
 					: inactiveBulletHoleColor;
 				const cenColor = isActive
 					? centroidColor
-					: "rgba(0,116,217,0.7)";
+					: 'rgba(0,116,217,0.7)';
 				const aimColor = isActive
 					? aimPointColor
-					: "rgba(255,133,27,0.7)";
+					: 'rgba(255,133,27,0.7)';
 				const offColor = offsetLineColor;
 				const lWidth = lineWidthBase;
 				// Draw Holes
@@ -1874,7 +1875,7 @@
 					if (showGroupNameInLegend) lines.push(group.name);
 
 					lines.push(
-						`(${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit})`,
+						`${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit}`,
 					);
 					if (group.maxSpread !== null) {
 						// Spread
@@ -1883,14 +1884,14 @@
 							referenceUnit,
 							resultDisplayUnit,
 						);
-						let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
+						let l = `Spread: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit}`;
 						if (
-							angularUnitDisplay === "moa" &&
+							angularUnitDisplay === 'moa' &&
 							group.maxSpreadMOA !== null
 						)
 							l += ` (${group.maxSpreadMOA.toFixed(2)} MOA)`;
 						else if (
-							angularUnitDisplay === "mrad" &&
+							angularUnitDisplay === 'mrad' &&
 							group.maxSpreadMRAD !== null
 						)
 							l += ` (${group.maxSpreadMRAD.toFixed(2)} MRAD)`;
@@ -1904,14 +1905,14 @@
 							referenceUnit,
 							resultDisplayUnit,
 						);
-						let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit}`;
+						let l = `Mean Radius: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit}`;
 						if (
-							angularUnitDisplay === "moa" &&
+							angularUnitDisplay === 'moa' &&
 							group.meanRadiusMOA !== null
 						)
 							l += ` (${group.meanRadiusMOA.toFixed(2)} MOA)`;
 						else if (
-							angularUnitDisplay === "mrad" &&
+							angularUnitDisplay === 'mrad' &&
 							group.meanRadiusMRAD !== null
 						)
 							l += ` (${group.meanRadiusMRAD.toFixed(2)} MRAD)`;
@@ -1925,7 +1926,7 @@
 							resultDisplayUnit,
 						);
 						lines.push(
-							`Offset: ${d.toFixed(3)}${resultDisplayUnit == "inches" ? '"' : " " + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
+							`Offset: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
 						);
 					}
 					const { width: boxW, height: boxH } = group.infoBoxSize;
@@ -1942,8 +1943,8 @@
 					const fSize = legendFontSize;
 					const pad = 4;
 					const lH = fSize * 1.2;
-					const bgColorWithAlpha = legendBgColor.startsWith("#")
-						? legendBgColor + "E6"
+					const bgColorWithAlpha = legendBgColor.startsWith('#')
+						? legendBgColor + 'E6'
 						: legendBgColor;
 					const LborderColor = legendBorderColor;
 					const LtextColor = legendTextColor;
@@ -1954,8 +1955,8 @@
 					exportCtx.strokeRect(infoX, infoY, boxW, boxH);
 					exportCtx.fillStyle = LtextColor;
 					exportCtx.font = `${fSize}px sans-serif`;
-					exportCtx.textAlign = "left";
-					exportCtx.textBaseline = "top";
+					exportCtx.textAlign = 'left';
+					exportCtx.textBaseline = 'top';
 					lines.forEach((line, i) =>
 						exportCtx.fillText(
 							line,
@@ -1968,17 +1969,17 @@
 		exportCtx.restore(); // Restore after overlays
 		// Generate Data URL and Download
 		try {
-			const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
-			const link = document.createElement("a");
+			const dataUrl = exportCanvas.toDataURL('image/jpeg', 0.9);
+			const link = document.createElement('a');
 			const baseName =
-				imageFile?.name.replace(/\.[^/.]+$/, "") ?? "target-analysis";
+				imageFile?.name.replace(/\.[^/.]+$/, '') ?? 'target-analysis';
 			link.download = `${baseName}.jpg`;
 			link.href = dataUrl;
 			link.click();
 			link.remove();
 		} catch (error) {
-			console.error("Error exporting canvas:", error);
-			alert("Failed to export image as JPEG.");
+			console.error('Error exporting canvas:', error);
+			alert('Failed to export image as JPEG.');
 		}
 	}
 
@@ -2000,22 +2001,22 @@
 			? groups[activeGroupIndex]
 			: null;
 	$: canvasCursor = isPanning
-		? "grabbing"
+		? 'grabbing'
 		: isDraggingInfoBox
-			? "move"
+			? 'move'
 			: isDraggingHole
-				? "grabbing"
-				: mode === "panning"
-					? "grab"
-					: mode === "scaling"
-						? "crosshair"
-						: mode === "placingHoles"
-							? "copy"
-							: mode === "placingAim"
-								? "crosshair"
-								: mode === "selectingHole"
-									? "pointer"
-									: "default";
+				? 'grabbing'
+				: mode === 'panning'
+					? 'grab'
+					: mode === 'scaling'
+						? 'crosshair'
+						: mode === 'placingHoles'
+							? 'copy'
+							: mode === 'placingAim'
+								? 'crosshair'
+								: mode === 'selectingHole'
+									? 'pointer'
+									: 'default';
 </script>
 
 <div
@@ -2093,14 +2094,14 @@
 						<div class="btn-group">
 							<button
 								class="btn btn-sm"
-								class:btn-outline={mode === "panning"}
+								class:btn-outline={mode === 'panning'}
 								on:click={() => {
 									mode =
-										mode === "panning"
+										mode === 'panning'
 											? scale
-												? "placingHoles"
-												: "scaling"
-											: "panning";
+												? 'placingHoles'
+												: 'scaling'
+											: 'panning';
 									selectedHoleIndex = null;
 									redrawCanvas();
 								}}
@@ -2111,9 +2112,9 @@
 							</button>
 							<button
 								class="btn btn-sm"
-								class:btn-outline={mode === "placingHoles"}
+								class:btn-outline={mode === 'placingHoles'}
 								on:click={() => {
-									mode = "placingHoles";
+									mode = 'placingHoles';
 									selectedHoleIndex = null;
 									redrawCanvas();
 								}}
@@ -2124,9 +2125,9 @@
 							</button>
 							<button
 								class="btn btn-sm"
-								class:btn-outline={mode === "placingAim"}
+								class:btn-outline={mode === 'placingAim'}
 								on:click={() => {
-									mode = "placingAim";
+									mode = 'placingAim';
 									selectedHoleIndex = null;
 									redrawCanvas();
 								}}
@@ -2137,9 +2138,9 @@
 							</button>
 							<button
 								class="btn btn-sm"
-								class:btn-outline={mode === "selectingHole"}
+								class:btn-outline={mode === 'selectingHole'}
 								on:click={() => {
-									mode = "selectingHole";
+									mode = 'selectingHole';
 									redrawCanvas();
 								}}
 								title="Select/Move hole (Click near a hole, use arrows/buttons to nudge/delete)"
@@ -2170,7 +2171,7 @@
 						</canvas>
 					</div>
 
-					{#if mode === "selectingHole" && selectedHoleIndex !== null}
+					{#if mode === 'selectingHole' && selectedHoleIndex !== null}
 						<div
 							class="absolute top-2 left-2 z-10 card bg-base-100/80 backdrop-blur-sm shadow-lg p-2 border border-base-300"
 						>
@@ -2185,7 +2186,7 @@
 									class="btn btn-info btn-xs btn-square col-start-2 row-start-1"
 									on:click={() =>
 										handleKeyDown({
-											key: "ArrowUp",
+											key: 'ArrowUp',
 											preventDefault: () => {},
 										} as KeyboardEvent)}
 									title="Nudge Up">↑</button
@@ -2194,7 +2195,7 @@
 									class="btn btn-info btn-xs btn-square col-start-1 row-start-2"
 									on:click={() =>
 										handleKeyDown({
-											key: "ArrowLeft",
+											key: 'ArrowLeft',
 											preventDefault: () => {},
 										} as KeyboardEvent)}
 									title="Nudge Left">←</button
@@ -2203,7 +2204,7 @@
 									class="btn btn-info btn-xs btn-square col-start-3 row-start-2"
 									on:click={() =>
 										handleKeyDown({
-											key: "ArrowRight",
+											key: 'ArrowRight',
 											preventDefault: () => {},
 										} as KeyboardEvent)}
 									title="Nudge Right">→</button
@@ -2212,7 +2213,7 @@
 									class="btn btn-info btn-xs btn-square col-start-2 row-start-3"
 									on:click={() =>
 										handleKeyDown({
-											key: "ArrowDown",
+											key: 'ArrowDown',
 											preventDefault: () => {},
 										} as KeyboardEvent)}
 									title="Nudge Down">↓</button
@@ -2237,7 +2238,7 @@
 						</div>
 					{/if}
 				</div>
-			{:else if mode !== "loading"}
+			{:else if mode !== 'loading'}
 				<div
 					class="flex justify-center items-center flex-grow min-h-[200px] w-full bg-base-100 border border-dashed border-base-300 rounded-lg p-5"
 				>
@@ -2305,14 +2306,14 @@
 						</div>
 						<button
 							class="btn btn-secondary btn-sm"
-							class:btn-active={mode === "scaling"}
+							class:btn-active={mode === 'scaling'}
 							on:click={enterScaleMode}
-							title={mode === "scaling"
-								? "Click-drag on image to draw reference line"
-								: "Draw reference line based on known length"}
+							title={mode === 'scaling'
+								? 'Click-drag on image to draw reference line'
+								: 'Draw reference line based on known length'}
 							disabled={!imageBitmap}
 						>
-							📏 {#if mode === "scaling"}Drawing Ref...{:else}Draw
+							📏 {#if mode === 'scaling'}Drawing Ref...{:else}Draw
 								Ref Line{/if}
 						</button>
 					</div>
@@ -2419,8 +2420,8 @@
 								on:change={handleAngularUnitChange}
 								disabled={targetDistance <= 0}
 								title={targetDistance <= 0
-									? "Set Target Distance > 0 to enable MOA/MIL"
-									: "Angular units for results"}
+									? 'Set Target Distance > 0 to enable MOA/MIL'
+									: 'Angular units for results'}
 								class="select select-bordered select-xs w-full sm:w-auto"
 							>
 								<option value="moa">MOA</option>
