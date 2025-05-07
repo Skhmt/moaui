@@ -1742,7 +1742,7 @@
 		);
 	}
 
-	// --- exportCanvasAsJpeg (Using 'convertUnits' and moa.mrad2moa) ---
+	// --- exportCanvasAsJpeg ---
 	function exportCanvasAsJpeg(): void {
 		if (!canvasElement || !imageBitmap || !ctx || !scale) {
 			alert('Canvas/image/scale not ready.');
@@ -1865,20 +1865,19 @@
 						exportCtx.setLineDash([]);
 					}
 				}
-				// Draw Info Box
+				// --- Draw Info Box (Modified for Scaling) ---
 				if (
 					group.resultsValid &&
-					group.infoBoxAnchorImage &&
-					group.infoBoxSize
+					group.infoBoxAnchorImage // Position still comes from the group
 				) {
+					// 1. Re-populate the 'lines' array exactly as in drawInfoBox
+					// This is crucial for correct box sizing.
 					const lines: string[] = [];
 					if (showGroupNameInLegend) lines.push(group.name);
-
 					lines.push(
-						`${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit}`,
+						`(${group.bulletHolesReal.length} shots @ ${targetDistance} ${targetDistanceUnit})`,
 					);
 					if (group.maxSpread !== null) {
-						// Spread
 						const d = convertUnits(
 							group.maxSpread,
 							referenceUnit,
@@ -1888,18 +1887,20 @@
 						if (
 							angularUnitDisplay === 'moa' &&
 							group.maxSpreadMOA !== null
-						)
+						) {
 							l += ` (${group.maxSpreadMOA.toFixed(2)} MOA)`;
-						else if (
+						} else if (
 							angularUnitDisplay === 'mrad' &&
 							group.maxSpreadMRAD !== null
-						)
+						) {
 							l += ` (${group.maxSpreadMRAD.toFixed(2)} MRAD)`;
+						}
 						lines.push(l);
-					} else if (group.bulletHolesReal.length < 2)
+					} else if (group.bulletHolesReal.length < 2) {
 						lines.push(`Spread: N/A (<2 shots)`);
+					}
+
 					if (group.meanRadius !== null) {
-						// Mean Radius
 						const d = convertUnits(
 							group.meanRadius,
 							referenceUnit,
@@ -1909,17 +1910,18 @@
 						if (
 							angularUnitDisplay === 'moa' &&
 							group.meanRadiusMOA !== null
-						)
+						) {
 							l += ` (${group.meanRadiusMOA.toFixed(2)} MOA)`;
-						else if (
+						} else if (
 							angularUnitDisplay === 'mrad' &&
 							group.meanRadiusMRAD !== null
-						)
+						) {
 							l += ` (${group.meanRadiusMRAD.toFixed(2)} MRAD)`;
+						}
 						lines.push(l);
 					}
+
 					if (group.offsetFromAim !== null) {
-						// Offset
 						const d = convertUnits(
 							group.offsetFromAim.distance,
 							referenceUnit,
@@ -1929,43 +1931,88 @@
 							`Offset: ${d.toFixed(3)}${resultDisplayUnit == 'inches' ? '"' : ' ' + resultDisplayUnit} @ ${group.offsetFromAim.angleDegrees.toFixed(1)}°`,
 						);
 					}
-					const { width: boxW, height: boxH } = group.infoBoxSize;
+
+					// --- Start Scaling Calculation ---
+					const currentViewScale = viewScale || 1.0; // Get current view scale, default to 1
+
+					// Adjust font size based on viewScale (inversely proportional)
+					let scaledFontSize = legendFontSize / currentViewScale;
+
+					// Robust clamping for the scaled font size:
+					// Min font size: e.g., 8px
+					// Max font size: e.g., 5 times the original legendFontSize, or a fixed upper limit like 72px
+					const minExportFontSize = 8;
+					const maxExportFontSize = Math.min(legendFontSize * 5, 72); // Example: Max 5x or 72px
+
+					const adjustedFontSize = Math.max(
+						minExportFontSize,
+						Math.min(maxExportFontSize, scaledFontSize),
+					);
+
+					const pad = 4; // Use same padding as on-screen drawInfoBox
+					const adjustedLineHeight = adjustedFontSize * 1.2; // Use same line height factor
+
+					// Recalculate box dimensions based on adjusted font size
+					exportCtx.save(); // Save context before changing font for measurement
+					exportCtx.font = `${adjustedFontSize}px sans-serif`;
+					let maxW = 0;
+					lines.forEach(
+						(ln) =>
+							(maxW = Math.max(
+								maxW,
+								exportCtx.measureText(ln).width,
+							)),
+					);
+					exportCtx.restore(); // Restore context
+
+					const exportBoxW = maxW + pad * 2;
+					const exportBoxH =
+						lines.length * adjustedLineHeight + pad * 2;
+					// --- End Scaling Calculation ---
+
+					// Get anchor position (image coordinates)
 					let infoX = group.infoBoxAnchorImage.x;
 					let infoY = group.infoBoxAnchorImage.y;
+
+					// Clamp position using the *newly calculated* box dimensions
 					infoX = Math.max(
 						0,
-						Math.min(infoX, exportCanvas.width - boxW),
+						Math.min(infoX, exportCanvas.width - exportBoxW),
 					);
 					infoY = Math.max(
 						0,
-						Math.min(infoY, exportCanvas.height - boxH),
+						Math.min(infoY, exportCanvas.height - exportBoxH),
 					);
-					const fSize = legendFontSize;
-					const pad = 4;
-					const lH = fSize * 1.2;
+
+					// Drawing settings
 					const bgColorWithAlpha = legendBgColor.startsWith('#')
 						? legendBgColor + 'E6'
 						: legendBgColor;
 					const LborderColor = legendBorderColor;
 					const LtextColor = legendTextColor;
+
+					// Draw Box Background & Border
 					exportCtx.fillStyle = bgColorWithAlpha;
 					exportCtx.strokeStyle = LborderColor;
 					exportCtx.lineWidth = 1;
-					exportCtx.fillRect(infoX, infoY, boxW, boxH);
-					exportCtx.strokeRect(infoX, infoY, boxW, boxH);
+					exportCtx.fillRect(infoX, infoY, exportBoxW, exportBoxH);
+					exportCtx.strokeRect(infoX, infoY, exportBoxW, exportBoxH);
+
+					// Draw Text
 					exportCtx.fillStyle = LtextColor;
-					exportCtx.font = `${fSize}px sans-serif`;
+					exportCtx.font = `${adjustedFontSize}px sans-serif`;
 					exportCtx.textAlign = 'left';
 					exportCtx.textBaseline = 'top';
 					lines.forEach((line, i) =>
 						exportCtx.fillText(
 							line,
 							infoX + pad,
-							infoY + pad + i * lH,
+							infoY + pad + i * adjustedLineHeight,
 						),
 					);
 				}
-			});
+			}); // End of groups.forEach loop
+
 		exportCtx.restore(); // Restore after overlays
 		// Generate Data URL and Download
 		try {
