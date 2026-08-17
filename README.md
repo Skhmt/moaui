@@ -9,7 +9,7 @@
 - [x] Handles on the reference line
 - [x] Hide the reference line
 - [ ] Moa/mil clicks to zero
-- [ ] Middle click+drag to pan
+- [x] Middle click+drag to pan
 - [ ] Mobile testing
 - [ ] Two finger zoom
 - [ ] Two finger pan

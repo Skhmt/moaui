@@ -264,6 +264,24 @@
 
 	function handleCanvasPointerDown(e: PointerEvent) {
 		if (!canvasElement || !ctx || !lastViewport || !imageBitmap) return;
+
+		// Middle click pans from any mode
+		if (e.button === 1) {
+			e.preventDefault();
+			const dCoords = getCanvasDisplayCoords(e, canvasElement);
+			if (!dCoords) return;
+			interaction.isPanning = true;
+			interaction.panStartPointerCoords = dCoords;
+			interaction.panStartViewCenter = { ...viewCenter };
+			(e.target as HTMLElement).setPointerCapture(e.pointerId);
+			canvasElement.style.cursor = 'grabbing';
+			e.stopPropagation();
+			return;
+		}
+
+		// Only handle left click for other tools
+		if (e.button !== 0) return;
+
 		const dCoords = getCanvasDisplayCoords(e, canvasElement);
 		if (!dCoords) return;
 		const iCoords = cvsToImg(dCoords);
@@ -466,6 +484,7 @@
 	}
 
 	async function handleCanvasClick(e: MouseEvent) {
+		if (e.button !== 0) return;
 		if (interaction.ignoreNextClick) {
 			interaction.ignoreNextClick = false;
 			return;

@@ -20,13 +20,17 @@
 >
 	<div
 		class="w-full h-full overflow-hidden border border-base-300 bg-base-200 flex justify-center items-center"
-		on:wheel={onWheel}
+		on:wheel|preventDefault={onWheel}
+		on:auxclick|preventDefault
 		bind:this={canvasAreaElement}
 	>
 		<canvas
 			bind:this={canvasElement}
 			on:pointerdown={onPointerDown}
 			on:click={onClick}
+			on:wheel|preventDefault={onWheel}
+			on:auxclick|preventDefault
+			on:contextmenu={(e) => { e.preventDefault(); }}
 			class="block touch-none w-full h-full"
 			style:cursor={canvasCursor}
 			style:image-rendering="smooth"
