@@ -126,6 +126,8 @@ export function drawScalingLine(
 	scaleLineColor: string,
 	lineWidthBase: number,
 	dpr: number,
+	activeHandle: 'start' | 'end' | null = null,
+	scaleMarkerSize: number = 6,
 ): void {
 	ctx.save();
 	ctx.beginPath();
@@ -135,10 +137,35 @@ export function drawScalingLine(
 	ctx.lineWidth = Math.max(dpr, lineWidthBase * dpr);
 	ctx.setLineDash([]);
 	ctx.stroke();
-	ctx.fillStyle = scaleLineColor;
-	const mS = Math.max(2 * dpr, lineWidthBase * dpr);
-	ctx.fillRect(startC.x - mS / 2, startC.y - mS / 2, mS, mS);
-	ctx.fillRect(endC.x - mS / 2, endC.y - mS / 2, mS, mS);
+
+	const drawHandle = (pos: Point, isActive: boolean) => {
+		const baseRadius = Math.max(6 * dpr, scaleMarkerSize * dpr * 0.9);
+		const radius = isActive ? baseRadius * 1.3 : baseRadius;
+
+		// Outer dark shadow/halo
+		ctx.beginPath();
+		ctx.arc(pos.x, pos.y, radius + 1.5 * dpr, 0, 2 * Math.PI);
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+		ctx.fill();
+
+		// Handle body
+		ctx.beginPath();
+		ctx.arc(pos.x, pos.y, radius, 0, 2 * Math.PI);
+		ctx.fillStyle = isActive ? '#FFFFFF' : scaleLineColor;
+		ctx.fill();
+		ctx.lineWidth = Math.max(1.5 * dpr, 2 * dpr);
+		ctx.strokeStyle = '#000000';
+		ctx.stroke();
+
+		// Center target indicator
+		ctx.beginPath();
+		ctx.arc(pos.x, pos.y, Math.max(1.5 * dpr, 2 * dpr), 0, 2 * Math.PI);
+		ctx.fillStyle = isActive ? scaleLineColor : '#000000';
+		ctx.fill();
+	};
+
+	drawHandle(startC, activeHandle === 'start');
+	drawHandle(endC, activeHandle === 'end');
 	ctx.restore();
 }
 
@@ -464,6 +491,7 @@ export interface RenderCanvasParams {
 	selectedHoleIndex: number | null;
 	dpr: number;
 	appearance: AppearanceSettings;
+	activeRefLineHandle?: 'start' | 'end' | null;
 }
 
 export function renderMainCanvas(params: RenderCanvasParams): {
@@ -491,6 +519,7 @@ export function renderMainCanvas(params: RenderCanvasParams): {
 		selectedHoleIndex,
 		dpr,
 		appearance,
+		activeRefLineHandle = null,
 	} = params;
 
 	if (!ctx || !canvasElement || !imageBitmap) return null;
@@ -549,7 +578,7 @@ export function renderMainCanvas(params: RenderCanvasParams): {
 			dHeight,
 		);
 	ctx.save(); // Save before overlays
-	if (refLineStart && refLineEnd) {
+	if (appearance.showReferenceLine && refLineStart && refLineEnd) {
 		const sC = imageToCanvasCoords(refLineStart, vp, canvasElement, letterbox);
 		const eC = imageToCanvasCoords(refLineEnd, vp, canvasElement, letterbox);
 		if (
@@ -567,6 +596,8 @@ export function renderMainCanvas(params: RenderCanvasParams): {
 				appearance.scaleLineColor,
 				appearance.lineWidthBase,
 				dpr,
+				activeRefLineHandle,
+				appearance.scaleMarkerSize,
 			);
 		}
 	}
@@ -657,7 +688,7 @@ export function exportCanvasAsJpeg(params: ExportCanvasParams): void {
 	exportCtx.drawImage(imageBitmap, 0, 0);
 	exportCtx.save(); // Save before overlays
 	// Draw Scaling Line
-	if (refLineStart && refLineEnd) {
+	if (appearance.showReferenceLine && refLineStart && refLineEnd) {
 		exportCtx.beginPath();
 		exportCtx.moveTo(refLineStart.x, refLineStart.y);
 		exportCtx.lineTo(refLineEnd.x, refLineEnd.y);

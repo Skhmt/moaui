@@ -71,6 +71,23 @@
 				class="toggle toggle-xs toggle-primary"
 			/>
 		</div>
+		<div
+			class="flex flex-col flex-row items-start sm:items-center gap-1 sm:gap-2 flex-1 min-w-[150px]"
+		>
+			<label
+				for="showReferenceLine"
+				class="label text-xs font-medium whitespace-nowrap shrink-0 sm:w-20 sm:text-right"
+				title="Show reference measurement line on canvas?"
+				>Show Ref:</label
+			>
+			<input
+				type="checkbox"
+				id="showReferenceLine"
+				bind:checked={appearance.showReferenceLine}
+				on:change={onRedraw}
+				class="toggle toggle-xs toggle-primary"
+			/>
+		</div>
 	</div>
 	<div
 		class="flex flex-wrap gap-x-4 gap-y-3 mb-3 pb-3 border-b border-dashed border-base-300 justify-around lg:justify-start"

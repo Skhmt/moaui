@@ -87,4 +87,5 @@ export interface AppearanceSettings {
 	scaleLineWidth: number;
 	scaleMarkerSize: number;
 	showGroupNameInLegend: boolean;
+	showReferenceLine: boolean;
 }
