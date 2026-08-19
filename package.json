@@ -30,7 +30,7 @@
 	},
 	"overrides": {
 		"vite-plugin-pwa": {
-			"sharp": "0.35.0"
+			"sharp": "0.35.3"
 		}
 	}
 }
