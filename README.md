@@ -13,6 +13,7 @@
 - [ ] Mobile testing
 - [ ] Two finger zoom
 - [ ] Two finger pan
+- [ ] In select mode, show a click area for the bullet holes
 
 Maybe:
 
