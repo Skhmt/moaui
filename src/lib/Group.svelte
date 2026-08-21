@@ -102,17 +102,23 @@
 	let interaction: InteractionState = createInitialInteractionState();
 	let appearance: AppearanceSettingsType = { ...DEFAULT_APPEARANCE };
 
+	// --- Two-Finger Pinch Zoom State ---
+	const activePointers = new Map<number, Point>();
+	let pinchPrevDistance: number | null = null;
+
 	// --- Lifecycle & Observers ---
 	onMount(() => {
 		dpr = window.devicePixelRatio || 1;
 		window.addEventListener('pointermove', handleWindowPointerMove);
 		window.addEventListener('pointerup', handleWindowPointerUp);
+		window.addEventListener('pointercancel', handleWindowPointerCancel);
 		window.addEventListener('keydown', handleKeyDown);
 	});
 
 	onDestroy(() => {
 		window.removeEventListener('pointermove', handleWindowPointerMove);
 		window.removeEventListener('pointerup', handleWindowPointerUp);
+		window.removeEventListener('pointercancel', handleWindowPointerCancel);
 		window.removeEventListener('keydown', handleKeyDown);
 		cleanupResizeObserver();
 		if (imageUrl && imageUrl.startsWith('blob:')) URL.revokeObjectURL(imageUrl);
@@ -265,6 +271,17 @@
 	function handleCanvasPointerDown(e: PointerEvent) {
 		if (!canvasElement || !ctx || !lastViewport || !imageBitmap) return;
 
+		// Track active pointers to support two-finger pinch zooming on touch devices
+		const trackD = getCanvasDisplayCoords(e, canvasElement);
+		if (trackD) {
+			activePointers.set(e.pointerId, trackD);
+			if (activePointers.size === 2) {
+				beginPinchZoom();
+				return;
+			}
+			if (activePointers.size > 2) return;
+		}
+
 		// Middle click pans from any mode
 		if (e.button === 1) {
 			e.preventDefault();
@@ -356,10 +373,64 @@
 		}
 	}
 
+	function beginPinchZoom() {
+		const pts = [...activePointers.values()];
+		pinchPrevDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+
+		// Abort any single-pointer operation started by the first finger
+		if (canvasElement) {
+			for (const id of activePointers.keys()) {
+				try {
+					canvasElement.releasePointerCapture(id);
+				} catch {
+					// Pointer capture may not be held for this id
+				}
+			}
+			canvasElement.style.cursor = canvasCursor;
+		}
+		interaction.isPanning = false;
+		interaction.panStartPointerCoords = null;
+		interaction.panStartViewCenter = null;
+		interaction.isDraggingInfoBox = false;
+		interaction.draggingGroupIndex = null;
+		interaction.dragStartPointerCoords = null;
+		interaction.dragStartInfoBoxAnchorImage = null;
+		interaction.isDraggingHole = false;
+		if (interaction.isDrawingRefLine) {
+			// Abort an in-progress reference line draw; keep any existing line intact
+			refLineStart = null;
+			refLineEnd = null;
+		}
+		interaction.isDrawingRefLine = false;
+		interaction.isDraggingRefLineHandle = false;
+		interaction.draggingRefLineHandle = null;
+
+		// Prevent the tap that ends a pinch from triggering a canvas click action
+		interaction.ignoreNextClick = true;
+		setTimeout(() => { interaction.ignoreNextClick = false; }, 250);
+	}
+
 	function handleWindowPointerMove(e: PointerEvent) {
 		if (!canvasElement || !lastViewport || !canvasElement.clientWidth || !canvasElement.clientHeight) return;
 		const curPtrD = getCanvasDisplayCoords(e, canvasElement);
 		if (!curPtrD) return;
+
+		if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, curPtrD);
+
+		if (pinchPrevDistance !== null && activePointers.size >= 2) {
+			const pts = [...activePointers.values()];
+			const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+			if (dist > 0 && pinchPrevDistance > 0) {
+				const midD: Point = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+				const result = calculateZoom(dist / pinchPrevDistance, viewScale, fitScaleValue, viewCenter, cvsToImg(midD));
+				viewScale = result.newScale;
+				viewCenter = result.newCenter;
+				clampView();
+				requestAnimationFrame(redrawCanvas);
+			}
+			if (dist > 0) pinchPrevDistance = dist;
+			return;
+		}
 
 		if (interaction.isPanning && interaction.panStartPointerCoords && interaction.panStartViewCenter && canvasElement.hasPointerCapture(e.pointerId)) {
 			viewCenter = calculatePanOffset(curPtrD, interaction.panStartPointerCoords, interaction.panStartViewCenter, canvasElement, lastViewport);
@@ -412,7 +483,10 @@
 		}
 	}
 
-	function handleWindowPointerUp(e: PointerEvent) {
+	function handleWindowPointerRelease(e: PointerEvent) {
+		activePointers.delete(e.pointerId);
+		if (activePointers.size < 2) pinchPrevDistance = null;
+
 		const wasDragging =
 			interaction.isPanning ||
 			interaction.isDraggingInfoBox ||
@@ -481,6 +555,14 @@
 		interaction.dragStartPointerCoords = null;
 		interaction.dragStartInfoBoxAnchorImage = null;
 		if (canvasElement) canvasElement.style.cursor = canvasCursor;
+	}
+
+	function handleWindowPointerUp(e: PointerEvent) {
+		handleWindowPointerRelease(e);
+	}
+
+	function handleWindowPointerCancel(e: PointerEvent) {
+		handleWindowPointerRelease(e);
 	}
 
 	async function handleCanvasClick(e: MouseEvent) {
