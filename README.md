@@ -11,8 +11,7 @@
 - [ ] Moa/mil clicks to zero
 - [x] Middle click+drag to pan
 - [ ] Mobile testing
-- [ ] Two finger zoom
-- [ ] Two finger pan
+- [x] Two finger zoom
 - [ ] In select mode, show a click area for the bullet holes
 
 Maybe:
